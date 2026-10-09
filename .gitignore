@@ -1,0 +1,13 @@
+# Dependencies
+node_modules/
+
+# Secrets
+.env
+.env.local
+
+# Runtime data: the database holds real conversations, and media holds real
+# photos and voice memos. Neither belongs in version control.
+data/
+
+.DS_Store
+*.log

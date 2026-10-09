@@ -14,6 +14,7 @@ import {
   removeFactById,
   removeFacts,
   resetChat,
+  streak,
   usageForDay,
   utcDay,
 } from "../store.ts";
@@ -34,7 +35,7 @@ const HELP = [
   "/memory — what I've remembered about you",
   "/forget <number> or /forget all — remove what I've remembered",
   "/lists — your lists and notes; /lists shopping shows one",
-  "/reminders — what's coming up",
+  "/reminders — what's coming up. 👍 a reminder to mark it done; reply 1h to snooze it",
   "/usage — how much of today's model budget is used",
   "/reset — forget this conversation and start fresh (saved facts stay)",
   "/ping — check I'm alive",
@@ -45,6 +46,13 @@ const OWNER_HELP = [
   "/allow <number or email> — let someone in",
   "/deny <number or email> — remove them",
 ];
+
+/** " (daily, 5 in a row)" for a repeating reminder, nothing for a one-off. */
+export function repeatLabel(db: DB, reminder: { id: number; repeat: string }): string {
+  if (reminder.repeat === "none") return "";
+  const count = streak(db, reminder.id);
+  return ` (${reminder.repeat}${count >= 2 ? `, ${count} in a row` : ""})`;
+}
 
 const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 const shortModel = (model: string) => model.split("/").pop() ?? model;
@@ -119,7 +127,7 @@ export function runCommand(deps: CommandDeps, ctx: CommandContext, text: string)
       return [
         reminders.length
           ? reminders
-              .map((r) => `${formatLocal(r.dueAt, deps.timezone)}${r.repeat === "none" ? "" : ` (${r.repeat})`} — ${r.text}`)
+              .map((r) => `${formatLocal(r.dueAt, deps.timezone)}${repeatLabel(deps.db, r)} — ${r.text}`)
               .join("\n")
           : "No reminders set.",
       ];

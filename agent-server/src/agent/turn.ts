@@ -9,7 +9,9 @@ import { chatSummary, history, listFacts, type MessageRow, pendingMessages, save
 import { buildMessages } from "./context.ts";
 import { contextLine, memoryBlock, systemPrompt } from "./prompt.ts";
 import { parseReply, type ReplyPlan } from "./reply.ts";
-import { runTool, toolDefs } from "./tools.ts";
+import type { ToolDef } from "../llm/types.ts";
+import type { Web } from "../web/web.ts";
+import { afterWebToolDefs, linksIn, runTool, toolDefs } from "./tools.ts";
 
 export type TurnResult = {
   plan: ReplyPlan;
@@ -32,6 +34,7 @@ export type TurnDeps = {
   db: DB;
   llm: LLM;
   transcribe: Transcriber;
+  web: Web;
   agentName: string;
   timezone: string;
   mediaDir: string;
@@ -120,9 +123,9 @@ export function createRunTurn(deps: TurnDeps): RunTurn {
     const purpose = images.length > 0 ? "vision" : "tools";
     const usage: LLMUsage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
     let llmCalls = 0;
-    const ask = async (messages: ChatMessage[], withTools: boolean, maxOutputTokens = MAX_OUTPUT_TOKENS): Promise<LLMResponse> => {
+    const ask = async (messages: ChatMessage[], tools: ToolDef[] | undefined, maxOutputTokens = MAX_OUTPUT_TOKENS): Promise<LLMResponse> => {
       llmCalls++;
-      const res = await deps.llm.complete({ purpose, messages, tools: withTools ? toolDefs : undefined, maxOutputTokens, signal });
+      const res = await deps.llm.complete({ purpose, messages, tools, maxOutputTokens, signal });
       usage.inputTokens += res.usage.inputTokens;
       usage.outputTokens += res.usage.outputTokens;
       usage.cachedTokens += res.usage.cachedTokens;
@@ -133,30 +136,37 @@ export function createRunTurn(deps: TurnDeps): RunTurn {
     let messages = base(budget, images.length);
     let res: LLMResponse;
     try {
-      res = await ask(messages, true);
+      res = await ask(messages, toolDefs);
     } catch (err) {
       if (!(err instanceof RequestTooLargeError)) throw err;
       // Waiting will not help an oversized request; send less history and at most one photo.
       messages = base(Math.floor(budget / 3), Math.min(images.length, 1));
-      res = await ask(messages, true);
+      res = await ask(messages, toolDefs);
     }
 
-    const tools = { db: deps.db, chatId, senderId, timezone: deps.timezone, now: deps.now };
+    const userLinks = rows.filter((row) => row.role === "user").flatMap((row) => linksIn(row.text));
+    const context = { db: deps.db, chatId, senderId, timezone: deps.timezone, now: deps.now, web: deps.web, userLinks, signal };
+    // Once text from the web is in the turn, nothing it says can cause a change
+    // or send anything out: tools that save, schedule, delete, search or open a
+    // link are withheld and refused until the turn ends. A poisoned page can
+    // then mislead an answer, but it cannot act and cannot leak what the agent knows.
+    let tainted = false;
     for (let step = 1; res.toolCalls.length > 0 && step < MAX_STEPS; step++) {
       messages.push({ role: "assistant", content: res.text, toolCalls: res.toolCalls });
       for (const call of res.toolCalls) {
-        const out = runTool(call, tools);
+        const out = await runTool(call, context, !tainted);
         if (out.wrote) onCommit();
+        if (out.untrusted) tainted = true;
         messages.push({ role: "tool", toolCallId: call.id, content: out.text });
       }
       // On the last allowed step the tools are withheld, so the model has to answer in words.
-      res = await ask(messages, step < MAX_STEPS - 1);
+      res = await ask(messages, step < MAX_STEPS - 1 ? (tainted ? afterWebToolDefs : toolDefs) : undefined);
     }
 
     // Hidden reasoning counts against the output allowance and can use all of it,
     // leaving no reply. Give that one more try with room to spare.
     if (res.finishReason === "length" && !res.text.trim() && res.toolCalls.length === 0) {
-      res = await ask(messages, false, MAX_OUTPUT_TOKENS * 3);
+      res = await ask(messages, undefined, MAX_OUTPUT_TOKENS * 3);
     }
 
     return {

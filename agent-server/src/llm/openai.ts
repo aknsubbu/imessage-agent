@@ -103,6 +103,9 @@ export async function chatCompletion(opts: {
     body.tools = req.tools.map((tool) => ({ type: "function", function: tool }));
     body.parallel_tool_calls = false;
   }
+  if (req.builtinTools?.length) {
+    body.tools = [...((body.tools as unknown[]) ?? []), ...req.builtinTools.map((type) => ({ type }))];
+  }
 
   const timeout = AbortSignal.timeout(opts.timeoutMs ?? 60_000);
   const signal = req.signal ? AbortSignal.any([req.signal, timeout]) : timeout;

@@ -6,15 +6,18 @@ import type { Config } from "./config.ts";
 import { ActionHub, type HubOptions } from "./core/hub.ts";
 import { createIntake } from "./core/intake.ts";
 import { Lanes } from "./core/lanes.ts";
+import { createReminders } from "./core/reminders.ts";
 import { createScheduler } from "./core/scheduler.ts";
 import { type DB, openDb } from "./db.ts";
 import { createApp } from "./http.ts";
 import { createTranscriber, type Transcriber } from "./llm/audio.ts";
 import { FakeLLM } from "./llm/fake.ts";
+import { createGuard } from "./llm/guard.ts";
 import type { FetchLike } from "./llm/openai.ts";
 import { PoolLLM } from "./llm/pool.ts";
 import type { LLM } from "./llm/types.ts";
 import { allow } from "./store.ts";
+import { createWeb, type Web } from "./web/web.ts";
 
 export type RuntimeOverrides = {
   db?: DB;
@@ -24,6 +27,7 @@ export type RuntimeOverrides = {
   hub?: Partial<HubOptions>;
   transcribe?: Transcriber;
   convert?: TurnDeps["convert"];
+  web?: Web;
   log?: (message: string) => void;
 };
 
@@ -47,10 +51,20 @@ export function createRuntime(config: Config, overrides: RuntimeOverrides = {}) 
     (config.llmMode === "groq"
       ? createTranscriber({ slots: config.slots, db, fetchImpl: overrides.fetchImpl, now })
       : async () => "(voice memos cannot be transcribed on the fake model)");
+  const web =
+    overrides.web ??
+    createWeb({
+      llm,
+      // The injection classifier is a Groq model; without keys, pages are still
+      // labelled as untrusted and still cannot trigger a change.
+      guard: config.llmMode === "groq" ? createGuard({ slots: config.slots, db, fetchImpl: overrides.fetchImpl, now, log }) : undefined,
+      log,
+    });
   const runTurn = createRunTurn({
     db,
     llm,
     transcribe,
+    web,
     agentName: config.agentName,
     timezone: config.timezone,
     mediaDir: config.mediaDir,
@@ -69,7 +83,16 @@ export function createRuntime(config: Config, overrides: RuntimeOverrides = {}) 
     now,
     log,
   });
-  const scheduler = createScheduler({ db, lanes, timezone: config.timezone, now, log });
+  const reminders = createReminders({
+    db,
+    lanes,
+    timezone: config.timezone,
+    nudgeAfterMinutes: config.nudgeAfterMinutes,
+    quietHours: config.quietHours,
+    now,
+    log,
+  });
+  const scheduler = createScheduler({ reminders });
   const commands: CommandDeps = {
     db,
     timezone: config.timezone,
@@ -81,6 +104,7 @@ export function createRuntime(config: Config, overrides: RuntimeOverrides = {}) 
   const handleEvent = createIntake({
     db,
     lanes,
+    reminders,
     commands,
     claimable: config.ownerIds.length === 0,
     mediaDir: config.mediaDir,

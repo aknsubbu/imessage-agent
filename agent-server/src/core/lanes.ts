@@ -34,6 +34,8 @@ type Turn = {
   committed: boolean;
   /** False for fixed replies (commands), which have no row in `turns` and are never cancelled. */
   recorded: boolean;
+  /** Told the platform id of each bubble as it is delivered. */
+  onSent?: (messageId: string) => void;
   inflight?: string;
 };
 
@@ -116,8 +118,8 @@ export class Lanes {
   }
 
   /** Sends fixed text without the model, in order with anything already being sent. */
-  say(chatId: string, bubbles: string[]): Promise<void> {
-    const turn: Turn = { ...newTurn(randomUUID()), recorded: false, phase: "sending" };
+  say(chatId: string, bubbles: string[], onSent?: (messageId: string) => void): Promise<void> {
+    const turn: Turn = { ...newTurn(randomUUID()), recorded: false, phase: "sending", onSent };
     const rows = bubbles.map((text, i) =>
       this.persist(chatId, null, i + 1, 0, { type: "send", content: { type: "text", text } }),
     );
@@ -285,6 +287,7 @@ export class Lanes {
           if (text !== undefined) {
             addAssistantMessage(db, { chatId, text, platformId: outcome.messageId, turnId: turn.recorded ? turn.id : undefined }, now());
             lastWasSend = true;
+            if (outcome.messageId) turn.onSent?.(outcome.messageId);
           }
         } else if (outcome.status === "failed" || outcome.status === "unknown") {
           recordFailure(db, `action.${outcome.status}`, row.id, outcome.error ?? outcome.status, now());

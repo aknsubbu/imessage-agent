@@ -19,10 +19,12 @@ export function testConfig(patch: Partial<Config> = {}): Config {
     agentName: "Sage",
     timezone: "UTC",
     debounceMs: 20,
+    nudgeAfterMinutes: 30,
+    quietHours: [22, 8],
     ownerIds: [OWNER],
     llmMode: "fake",
     slots: [],
-    models: { chat: ["m-small", "m-large"], tools: ["m-large"], vision: ["m-vision"], summary: ["m-small"] },
+    models: { chat: ["m-small", "m-large"], tools: ["m-large"], vision: ["m-vision"], summary: ["m-small"], search: ["m-small"] },
     ...patch,
   };
 }
@@ -50,6 +52,8 @@ export const post = (app: ReturnType<typeof createRuntime>["app"], path: string,
   return app.request(path, { method: "POST", headers: signedHeaders(secret, raw), body: raw });
 };
 
+let sentCount = 0; // message ids are unique across calls, as real ones are
+
 /**
  * Stands in for the bridge: polls for actions and acknowledges each one as
  * sent, until `until` says enough has been seen or nothing arrives for a while.
@@ -67,7 +71,7 @@ export async function drain(
       const verdict = opts.ack?.(action) ?? "sent";
       if (verdict === "none") continue;
       runtime.hub.ack({ actionId: action.id, status: "sending" });
-      runtime.hub.ack({ actionId: action.id, status: verdict, messageId: `sent-${seen.length}` });
+      runtime.hub.ack({ actionId: action.id, status: verdict, messageId: `sent-${++sentCount}` });
     }
     if (opts.until?.(seen)) return seen;
   }

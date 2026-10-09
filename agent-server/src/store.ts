@@ -556,3 +556,98 @@ export function searchMessages(db: DB, chatId: string, query: string, limit: num
     limit,
   ).map(toMessage);
 }
+
+// --- reminder deliveries -------------------------------------------------------
+
+export type Run = {
+  id: number;
+  reminderId: number;
+  chatId: string;
+  senderId: string;
+  text: string;
+  dueAt: number;
+  sentAt: number;
+  repeat: string;
+  doneAt: number | null;
+  snoozedAt: number | null;
+};
+
+const RUN_COLUMNS = "r.*, COALESCE((SELECT repeat FROM reminders WHERE id = r.reminder_id), 'none') AS repeat";
+const toRun = (row: Row): Run => ({
+  id: row.id,
+  reminderId: row.reminder_id,
+  chatId: row.chat_id,
+  senderId: row.sender_id,
+  text: row.text,
+  dueAt: row.due_at,
+  sentAt: row.sent_at,
+  repeat: row.repeat,
+  doneAt: row.done_at,
+  snoozedAt: row.snoozed_at,
+});
+
+export function createRun(db: DB, reminder: Reminder, now: number): number {
+  const result = run(
+    db,
+    "INSERT INTO reminder_runs (reminder_id, chat_id, sender_id, text, due_at, sent_at) VALUES (?, ?, ?, ?, ?, ?)",
+    reminder.id,
+    reminder.chatId,
+    reminder.senderId,
+    reminder.text,
+    reminder.dueAt,
+    now,
+  );
+  return Number(result.lastInsertRowid);
+}
+
+export function setRunMessage(db: DB, runId: number, messageId: string, kind: "reminder" | "nudge"): void {
+  const column = kind === "nudge" ? "nudge_message_id" : "message_id";
+  run(db, `UPDATE reminder_runs SET ${column} = ? WHERE id = ?`, messageId, runId);
+}
+
+/** A tapback on one part of a message names it "p:0/<id>"; the delivery was recorded under the bare id. */
+const bareMessageId = (id: string): string => id.replace(/^p:\d+\//, "");
+
+/** The delivery whose bubble (or nudge) is the given message. */
+export function runByMessage(db: DB, chatId: string, messageId: string): Run | undefined {
+  const ids = [messageId, bareMessageId(messageId)];
+  const row = get(
+    db,
+    `SELECT ${RUN_COLUMNS} FROM reminder_runs r
+     WHERE r.chat_id = ? AND (r.message_id IN (?, ?) OR r.nudge_message_id IN (?, ?)) ORDER BY r.id DESC LIMIT 1`,
+    chatId,
+    ...ids,
+    ...ids,
+  );
+  return row ? toRun(row) : undefined;
+}
+
+export function markRun(db: DB, runId: number, field: "done" | "snoozed" | "nudged", now: number): void {
+  run(db, `UPDATE reminder_runs SET ${field}_at = ? WHERE id = ?`, now, runId);
+}
+
+/** Deliveries old enough to nudge about that nobody has acknowledged, snoozed or been nudged for. */
+export function runsAwaitingNudge(db: DB, sentBefore: number): Run[] {
+  return all(
+    db,
+    `SELECT ${RUN_COLUMNS} FROM reminder_runs r
+     WHERE r.done_at IS NULL AND r.snoozed_at IS NULL AND r.nudged_at IS NULL
+       AND r.message_id IS NOT NULL AND r.sent_at <= ? ORDER BY r.sent_at LIMIT 20`,
+    sentBefore,
+  ).map(toRun);
+}
+
+export function userMessagedSince(db: DB, chatId: string, since: number): boolean {
+  return Boolean(get(db, "SELECT 1 AS x FROM messages WHERE chat_id = ? AND role = 'user' AND created_at > ? LIMIT 1", chatId, since));
+}
+
+/** How many deliveries in a row, counting back from the latest, were marked done. */
+export function streak(db: DB, reminderId: number): number {
+  const rows = all(db, "SELECT done_at FROM reminder_runs WHERE reminder_id = ? ORDER BY due_at DESC, id DESC LIMIT 400", reminderId);
+  let count = 0;
+  for (const row of rows) {
+    if (row.done_at === null) break;
+    count++;
+  }
+  return count;
+}

@@ -15,8 +15,10 @@ import {
   setEventOutcome,
 } from "../store.ts";
 import type { Lanes } from "./lanes.ts";
+import type { ReminderOutcome, Reminders } from "./reminders.ts";
 
 export type Outcome =
+  | ReminderOutcome
   | "duplicate"
   | "signal" // reaction, read receipt, poll vote: recorded, never a turn
   | "auto_reply"
@@ -31,6 +33,7 @@ export type Outcome =
 export type IntakeDeps = {
   db: DB;
   lanes: Lanes;
+  reminders: Reminders;
   commands: CommandDeps;
   /** True when no owner was configured: the first person to text becomes the owner. */
   claimable: boolean;
@@ -60,6 +63,8 @@ export function createIntake(deps: IntakeDeps): (ev: InboundEvent) => Outcome {
   const { db, lanes, now, log } = deps;
 
   const decide = (ev: InboundEvent): Outcome => {
+    // A thumbs-up on a reminder marks it done. Only from people the agent answers.
+    if (ev.kind === "reaction" && ev.sender && roleOf(db, ev.sender.id)) return deps.reminders.onReaction(ev) ?? "signal";
     if (ev.kind !== "message") return "signal";
     // Focus and Driving auto-replies, and spam-flagged messages, never get an answer.
     if (ev.flags?.autoReply || ev.flags?.spam) return "auto_reply";
@@ -87,6 +92,13 @@ export function createIntake(deps: IntakeDeps): (ev: InboundEvent) => Outcome {
       addUserMessage(db, { ...message, state: "handled" }, now());
       void lanes.say(ev.chat.id, runCommand(deps.commands, { chatId: ev.chat.id, senderId: ev.sender.id, role }, text) ?? []);
       return "command";
+    }
+
+    // "done" or "1h" in answer to a reminder is handled on the spot, without the model.
+    const handled = media.length === 0 ? deps.reminders.onMessage(ev, text) : null;
+    if (handled) {
+      addUserMessage(db, { ...message, state: "handled" }, now());
+      return handled;
     }
 
     // A lone "thanks" or "ok" gets a tapback. Inside a burst it is part of the turn instead.

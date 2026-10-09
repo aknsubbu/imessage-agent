@@ -36,7 +36,7 @@ function setup(respond: (call: Call, n: number) => Reply, keys = ["k1", "k2", "k
   const db = openDb(":memory:");
   const pool = new PoolLLM({
     slots: keys.map((apiKey, i) => ({ name: `slot-${i + 1}`, baseUrl: "http://llm.test/v1", apiKey })),
-    models: { chat: ["small", "large"], tools: ["large"], vision: ["vision"], summary: ["small"] },
+    models: { chat: ["small", "large"], tools: ["large"], vision: ["vision"], summary: ["small"], search: ["small"] },
     db,
     fetchImpl,
     now: () => clock,
@@ -124,7 +124,7 @@ describe("key pool", () => {
     const t = setup(() => ok("x"));
     const pool = new PoolLLM({
       slots: [{ name: "s", baseUrl: "http://llm.test/v1", apiKey: "k1" }],
-      models: { chat: ["openai/gpt-oss-20b"], tools: [], vision: ["qwen/qwen3.8-27b"], summary: [] },
+      models: { chat: ["openai/gpt-oss-20b"], tools: [], vision: ["qwen/qwen3.8-27b"], summary: [], search: [] },
       db: t.db,
       fetchImpl: async (url, init) => {
         t.calls.push({ key: "k1", model: "", body: JSON.parse(String(init.body)) });
@@ -154,6 +154,7 @@ describe("runTurn", () => {
       timezone: "UTC",
       now: () => 100,
       transcribe: async () => "",
+      web: { search: async () => "", read: async () => "" },
       mediaDir: "/tmp/unused",
       log: () => {},
       llm: {

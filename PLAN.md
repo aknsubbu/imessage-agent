@@ -62,6 +62,7 @@ What follows from this:
 | Is your Photon line shared or dedicated? | Shared |
 | What do photos and voice memos arrive as? | HEIC (about 6 MB) and CAF with Opus audio; both are converted on the server |
 | Does a plain reply to you go through on the shared line? | Yes |
+| Does Groq's built-in web search work on a free key? | Yes. One search costs between about 2,400 and 8,000 tokens, charged to the small model's separate budget |
 
 ### Still not confirmed
 
@@ -69,7 +70,6 @@ What follows from this:
 |---|---|
 | Does a reminder (a message the agent starts) reach you on the shared line? | Text it "remind me in 2 minutes to stretch" to find out |
 | On a shared line, does a reply to an unregistered sender go through? | Decides whether extra users must be registered in the Photon dashboard |
-| Do `browser_search` and `code_interpreter` work on a free key? | `npm run probe -- --search` answers it; decides whether web search needs Tavily |
 | Is a single request over 8,000 tokens rejected outright? | `npm run probe -- --large` answers it |
 
 ## 3. Architecture

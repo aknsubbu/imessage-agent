@@ -158,6 +158,26 @@ const MIGRATIONS: string[] = [
   END;
   INSERT INTO messages_fts (rowid, text) SELECT id, text FROM messages;
   `,
+  `
+  -- One row each time a reminder is delivered, so it can be marked done,
+  -- snoozed or nudged, and so a repeating reminder has a history to count streaks from.
+  CREATE TABLE reminder_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reminder_id INTEGER NOT NULL,
+    chat_id TEXT NOT NULL,
+    sender_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    due_at INTEGER NOT NULL,
+    sent_at INTEGER NOT NULL,
+    message_id TEXT,                 -- the delivered bubble, once the bridge confirms it
+    nudge_message_id TEXT,
+    done_at INTEGER,
+    snoozed_at INTEGER,
+    nudged_at INTEGER
+  );
+  CREATE INDEX reminder_runs_chat ON reminder_runs (chat_id, sent_at);
+  CREATE INDEX reminder_runs_reminder ON reminder_runs (reminder_id, due_at);
+  `,
 ];
 
 export function openDb(path: string): DB {

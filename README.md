@@ -55,7 +55,11 @@ cd agent-server && npm run probe
 
 - Hold a conversation, remember lasting facts about you, and keep a running summary of long chats.
 - Keep lists and notes, set one-off and repeating reminders, search earlier messages, do exact arithmetic.
+- Follow reminders through without the model: 👍 a reminder to mark it done, reply `1h` (or `snooze`, `tomorrow`, `done`) to put it off or finish it, one nudge after 30 quiet minutes, and a streak count for repeating ones.
 - Understand voice memos (transcribed with Whisper) and photos.
+- Search the web (Groq's built-in search, on the same keys) and read a link you send.
+
+Web content is treated as untrusted: the link fetcher opens only links you sent yourself and refuses private and internal addresses, pages are scored by Groq's prompt-injection classifier, and once web text is in a turn the agent cannot save, schedule, delete, search again or open another link until your next message.
 
 Voice and photos need `ffmpeg` on the machine. Photos also need a HEIC decoder: `sips` on macOS (built in), or `heif-convert` on Linux (`apt install libheif-examples`).
 

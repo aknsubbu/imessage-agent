@@ -10,6 +10,10 @@ export type Config = {
   agentName: string;
   timezone: string;
   debounceMs: number;
+  /** Minutes before one follow-up to a reminder nobody acknowledged. 0 turns nudges off. */
+  nudgeAfterMinutes: number;
+  /** Local hours [from, to) in which the agent does not nudge. */
+  quietHours: [number, number];
   ownerIds: string[];
   llmMode: "groq" | "fake";
   slots: Slot[];
@@ -28,6 +32,10 @@ const DEFAULT_MODELS: Record<Purpose, string[]> = {
   tools: ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"],
   vision: ["qwen/qwen3.8-27b"],
   summary: ["openai/gpt-oss-20b", "openai/gpt-oss-120b"],
+  // Groq's built-in web search runs only on these models. The small one goes
+  // first: a search can cost several thousand tokens, and this keeps that off
+  // the large model's budget.
+  search: ["openai/gpt-oss-20b", "openai/gpt-oss-120b"],
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -52,6 +60,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     agentName: env.AGENT_NAME ?? "Sage",
     timezone: env.TIMEZONE ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
     debounceMs: Number(env.DEBOUNCE_MS ?? 2500),
+    nudgeAfterMinutes: Number(env.REMINDER_NUDGE_MINUTES ?? 30),
+    quietHours: [Number(env.QUIET_FROM ?? 22), Number(env.QUIET_TO ?? 8)],
     ownerIds: list(env.OWNER_IDS),
     llmMode: env.LLM_MODE === "fake" || slots.length === 0 ? "fake" : "groq",
     slots,
@@ -60,6 +70,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       tools: models("MODELS_TOOLS", DEFAULT_MODELS.tools),
       vision: models("MODELS_VISION", DEFAULT_MODELS.vision),
       summary: models("MODELS_SUMMARY", DEFAULT_MODELS.summary),
+      search: models("MODELS_SEARCH", DEFAULT_MODELS.search),
     },
   };
 }

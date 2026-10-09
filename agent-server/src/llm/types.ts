@@ -10,12 +10,14 @@ export type ChatMessage =
 export type ToolDef = { name: string; description: string; parameters: Record<string, unknown> };
 
 /** What the call is for; the pool maps each purpose to an ordered list of models. */
-export type Purpose = "chat" | "tools" | "vision" | "summary";
+export type Purpose = "chat" | "tools" | "vision" | "summary" | "search";
 
 export type LLMRequest = {
   purpose: Purpose;
   messages: ChatMessage[];
   tools?: ToolDef[];
+  /** Tools the provider runs on its own side, by type name, e.g. Groq's "browser_search". */
+  builtinTools?: string[];
   maxOutputTokens?: number;
   temperature?: number;
   signal?: AbortSignal;

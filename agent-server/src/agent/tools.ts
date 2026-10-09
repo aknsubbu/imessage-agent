@@ -15,13 +15,28 @@ import {
   searchMessages,
 } from "../store.ts";
 import { formatLocal, parseLocal, type Repeat } from "../time.ts";
+import type { Web } from "../web/web.ts";
 
-export type ToolContext = { db: DB; chatId: string; senderId: string; timezone: string; now: () => number };
+export type ToolContext = {
+  db: DB;
+  chatId: string;
+  senderId: string;
+  timezone: string;
+  now: () => number;
+  web: Web;
+  /** Links found in the person's own messages. `read_link` opens nothing else. */
+  userLinks: string[];
+  signal?: AbortSignal;
+};
 
 type Tool = ToolDef & {
   /** True when the tool changes something, so its turn must not be thrown away and run again. */
   writes: boolean;
-  run: (args: Record<string, any>, ctx: ToolContext) => string;
+  /** True when the result is text written by someone else (a web page, a search result). */
+  untrusted?: boolean;
+  /** True when the tool sends something out to the internet, which could carry private data with it. */
+  egress?: boolean;
+  run: (args: Record<string, any>, ctx: ToolContext) => string | Promise<string>;
 };
 
 const str = (description: string) => ({ type: "string", description });
@@ -164,6 +179,35 @@ const TOOLS: Tool[] = [
     },
   },
   {
+    name: "web_search",
+    description: "Search the web for current or specific facts: news, scores, prices, opening hours, anything you are not sure of.",
+    parameters: schema({ query: str("What to look up, written as a full question.") }, ["query"]),
+    writes: false,
+    untrusted: true,
+    egress: true,
+    run: ({ query }, ctx) => {
+      const text = String(query ?? "").trim();
+      return text ? ctx.web.search(text, ctx.signal) : "error: query is empty";
+    },
+  },
+  {
+    name: "read_link",
+    description: "Open a web link the person sent and read the page.",
+    parameters: schema({ url: str("The full http(s) link.") }, ["url"]),
+    writes: false,
+    untrusted: true,
+    egress: true,
+    run: ({ url }, ctx) => {
+      // The address must be one the person typed. A link the model made up, or was
+      // told about by a page, could carry private details away in its path or query.
+      const wanted = normaliseLink(String(url ?? ""));
+      if (!wanted || !ctx.userLinks.includes(wanted)) {
+        return "error: only a link the person sent can be opened. Ask them to send the link.";
+      }
+      return ctx.web.read(String(url), ctx.signal);
+    },
+  },
+  {
     name: "calculate",
     description: "Evaluate arithmetic exactly. Supports + - * / % ^ and parentheses.",
     parameters: schema({ expression: str("e.g. (2340 * 18) / 100") }, ["expression"]),
@@ -178,23 +222,61 @@ const TOOLS: Tool[] = [
   },
 ];
 
-export const toolDefs: ToolDef[] = TOOLS.map(({ name, description, parameters }) => ({ name, description, parameters }));
+const toDef = ({ name, description, parameters }: Tool): ToolDef => ({ name, description, parameters });
 
-/** Runs one tool call. Never throws: a failure comes back as text the model can read. */
-export function runTool(call: ToolCall, ctx: ToolContext): { text: string; wrote: boolean } {
+export const toolDefs: ToolDef[] = TOOLS.map(toDef);
+/** What is offered once web content is in the turn: nothing that changes anything or reaches the internet. */
+export const afterWebToolDefs: ToolDef[] = TOOLS.filter((tool) => !tool.writes && !tool.egress).map(toDef);
+
+/** A link reduced to host, path and query, so "Example.com/a/" and "https://www.example.com/a" compare equal. */
+export function normaliseLink(link: string): string | null {
+  try {
+    const text = link.trim().replace(/[.,!?;:)\]]+$/, "");
+    const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`);
+    return `${url.hostname.toLowerCase().replace(/^www\./, "")}${url.pathname.replace(/\/+$/, "")}${url.search}`;
+  } catch {
+    return null;
+  }
+}
+
+/** Every link in a piece of text the person wrote, normalised. */
+export function linksIn(text: string): string[] {
+  const found = text.match(/\bhttps?:\/\/[^\s<>"']+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s<>"']*)?/gi) ?? [];
+  return found.flatMap((link) => normaliseLink(link) ?? []);
+}
+
+export type ToolOutcome = { text: string; wrote: boolean; untrusted: boolean };
+
+/**
+ * Runs one tool call. Never throws except when the turn is cancelled: any other
+ * failure comes back as text the model can read. Once web content is in the
+ * turn (`clean` false), a tool that changes something or reaches the internet
+ * is refused whatever the model asked for.
+ */
+export async function runTool(call: ToolCall, ctx: ToolContext, clean: boolean): Promise<ToolOutcome> {
+  const fail = (text: string): ToolOutcome => ({ text, wrote: false, untrusted: false });
   const tool = TOOLS.find((t) => t.name === call.name);
-  if (!tool) return { text: `error: there is no tool called ${call.name}`, wrote: false };
+  if (!tool) return fail(`error: there is no tool called ${call.name}`);
+  if (tool.writes && !clean) {
+    return fail("error: nothing can be saved, scheduled or deleted in the same turn as reading web content. Tell the person, and they can ask again.");
+  }
+  if (tool.egress && !clean) {
+    return fail("error: only one search or link can be opened per message. Answer from what you have, and the person can ask for more.");
+  }
   let args: Record<string, any>;
   try {
     args = call.arguments ? JSON.parse(call.arguments) : {};
   } catch {
-    return { text: "error: arguments were not valid JSON", wrote: false };
+    return fail("error: arguments were not valid JSON");
   }
   try {
-    const text = tool.run(args ?? {}, ctx);
-    return { text, wrote: tool.writes && !text.startsWith("error:") };
+    const text = await tool.run(args ?? {}, ctx);
+    // A refusal written by this server is not web content, so it does not lock the turn down.
+    const ok = !text.startsWith("error:");
+    return { text, wrote: tool.writes && ok, untrusted: Boolean(tool.untrusted) && ok };
   } catch (err) {
-    return { text: `error: ${err instanceof Error ? err.message : String(err)}`, wrote: false };
+    if (ctx.signal?.aborted) throw err;
+    return fail(`error: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

@@ -1,0 +1,25 @@
+{
+  "name": "agent-server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx --env-file-if-exists=.env src/index.ts",
+    "dev": "tsx watch --env-file-if-exists=.env src/index.ts",
+    "chat": "tsx --env-file-if-exists=.env scripts/chat.ts",
+    "probe": "tsx --env-file-if-exists=.env scripts/probe.ts",
+    "test": "vitest run",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.4",
+    "hono": "^4.13.13",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "tsx": "^4",
+    "typescript": "^5",
+    "vitest": "^5"
+  }
+}

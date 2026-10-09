@@ -1,0 +1,19 @@
+{
+  "name": "imessage-chatbot",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx --env-file=.env --env-file-if-exists=.env.local src/index.ts",
+    "dev": "tsx watch --env-file=.env --env-file-if-exists=.env.local src/index.ts",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "spectrum-ts": "^12.10.1"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "@types/node": "^22",
+    "tsx": "^4"
+  }
+}

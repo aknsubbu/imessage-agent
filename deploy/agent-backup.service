@@ -1,0 +1,7 @@
+[Unit]
+Description=Back up the iMessage agent database
+
+[Service]
+Type=oneshot
+User=agent
+ExecStart=/opt/imessage-agent/deploy/backup.sh

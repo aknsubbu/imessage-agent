@@ -18,6 +18,28 @@ describe("http", () => {
     expect(wrong.status).toBe(401);
   });
 
+  it("refuses every route without a signature, including a poll that would hand over queued messages", async () => {
+    runtime = makeRuntime();
+    for (const path of ["/v1/events", "/v1/actions/poll", "/v1/actions/ack"]) {
+      for (const body of ["{}", "", '{"waitMs":0}']) {
+        const res = await runtime.app.request(path, { method: "POST", body });
+        expect(res.status, `${path} with ${JSON.stringify(body)}`).toBe(401);
+      }
+      expect((await runtime.app.request(path, { method: "POST", headers: { "x-spectrum-signature": "v0=00" }, body: "{}" })).status).toBe(401);
+    }
+    // Odd paths that a router might treat differently must not skip the check either.
+    for (const path of ["/v1//actions/poll", "/v1/actions/poll/", "/V1/actions/poll", "/v1/actions/poll%2F"]) {
+      expect((await runtime.app.request(path, { method: "POST", body: "{}" })).status, path).not.toBe(200);
+    }
+  });
+
+  it("refuses an oversized body before reading it, signed or not", async () => {
+    runtime = makeRuntime();
+    const big = JSON.stringify({ pad: "x".repeat(1_100_000) });
+    const res = await runtime.app.request("/v1/events", { method: "POST", body: big });
+    expect(res.status).toBe(413);
+  });
+
   it("rejects a malformed event", async () => {
     runtime = makeRuntime();
     const res = await post(runtime.app, "/v1/events", { v: 1, nope: true });

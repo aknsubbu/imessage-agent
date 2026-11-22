@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { configureBriefing } from "../src/core/briefing.ts";
 import { createWeather, describeWeatherCode, type Weather } from "../src/integrations/weather.ts";
 import { FakeLLM } from "../src/llm/fake.ts";
 import { addGoal, addReminder, getBriefing, logGoal, recordEvent, saveBriefing, saveProfile } from "../src/store.ts";
@@ -203,6 +204,30 @@ describe("the morning briefing", () => {
     await drain(runtime);
     clock.now = at(0, 8, 0);
     expect(runtime.scheduler.tick()).toBe(1);
+  });
+});
+
+describe("briefings stay in one-on-one chats", () => {
+  it("refuses to be set up from a group chat, so private reminders cannot land there", async () => {
+    const weather = fakeWeather();
+    start(weather);
+    recordEvent(runtime.db, textEvent("hi", { chat: { id: "group-1", type: "group", line: "shared" } }), clock.now);
+    const result = await configureBriefing(
+      { db: runtime.db, weather, timezone: "UTC", now: () => clock.now },
+      { senderId: OWNER, chatId: "group-1" },
+      { time: "8am", city: "Chennai" },
+    );
+    expect(result).toEqual({ ok: false, error: "a briefing can only be set up in a one-on-one chat" });
+    expect(getBriefing(runtime.db, OWNER)).toBeUndefined();
+    expect(weather.geocoded).toEqual([]);
+  });
+
+  it("follows the person's own one-on-one chat when they set it from another", async () => {
+    start(fakeWeather());
+    const other = "SMS;-;+15550001111";
+    recordEvent(runtime.db, textEvent("hi", { chat: { id: other, type: "dm", line: "shared" } }), clock.now);
+    await configureBriefing({ db: runtime.db, weather: fakeWeather(), timezone: "UTC", now: () => clock.now }, { senderId: OWNER, chatId: other }, { time: "8am" });
+    expect(getBriefing(runtime.db, OWNER)!.chatId).toBe(other);
   });
 });
 

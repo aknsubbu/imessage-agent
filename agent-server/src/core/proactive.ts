@@ -17,6 +17,7 @@ import {
   getProfile,
   goalCheckinByMessage,
   goalsAwaitingFollowup,
+  isDirectChat,
   lastAssistantMessage,
   logGoal,
   markBriefingSent,
@@ -76,10 +77,12 @@ export function createProactive(deps: {
 
   const linesOf = (senderId: string) => linesFor(getProfile(db, senderId));
 
+  // Briefings, check-ins, the review and follow-ups name a person's own goals and reminders, so each
+  // loop below skips any chat that is not one-on-one, whatever chat the goal or setting came from.
   function sendBriefings(today: string): number {
     let sent = 0;
     for (const b of enabledBriefings(db)) {
-      if (b.lastSentDay === today || !inWindow(b.time) || !roleOf(db, b.senderId)) continue;
+      if (b.lastSentDay === today || !inWindow(b.time) || !roleOf(db, b.senderId) || !isDirectChat(db, b.chatId)) continue;
       // Marked before it is built, so a crash loses one briefing instead of repeating it.
       markBriefingSent(db, b.senderId, today);
       composeBriefing({ db, weather: deps.weather, timezone, now }, b)
@@ -120,7 +123,7 @@ export function createProactive(deps: {
     let sent = 0;
     const sunday = localParts(now(), timezone).weekday === 0;
     for (const c of enabledCheckins(db) as Checkins[]) {
-      if (c.lastDay === today || !inWindow(c.time) || !roleOf(db, c.senderId)) continue;
+      if (c.lastDay === today || !inWindow(c.time) || !roleOf(db, c.senderId) || !isDirectChat(db, c.chatId)) continue;
       markCheckinDay(db, c.senderId, "last_day", today);
       const lines = linesOf(c.senderId);
       const goals = activeGoals(db, c.senderId).filter((g) => g.cadence !== "once");
@@ -153,7 +156,7 @@ export function createProactive(deps: {
       // Not at night: it waits for the morning, and is dropped only if it has gone stale by then.
       if (!stale && isQuiet()) continue;
       markFollowedUp(db, goal.id, now());
-      if (stale || !roleOf(db, goal.senderId)) continue;
+      if (stale || !roleOf(db, goal.senderId) || !isDirectChat(db, goal.chatId)) continue;
       void lanes.say(goal.chatId, [linesOf(goal.senderId).followup(goal.title)]);
       sent++;
     }

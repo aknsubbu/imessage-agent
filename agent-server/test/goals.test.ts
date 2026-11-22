@@ -122,6 +122,15 @@ describe("the goal tool", () => {
   });
 });
 
+describe("check-ins stay in one-on-one chats", () => {
+  it("are not started from a group chat", () => {
+    start();
+    recordEvent(runtime.db, textEvent("hi", { chat: { id: "group-1", type: "group", line: "shared" } }), clock.now);
+    ensureCheckins(runtime.db, OWNER, "group-1");
+    expect(getCheckins(runtime.db, OWNER)).toBeUndefined();
+  });
+});
+
 describe("evening check-ins", () => {
   it("send one bubble per goal at the chosen time, once a day, without the model", async () => {
     const llm = start();
@@ -318,6 +327,17 @@ describe("follow-ups on an event", () => {
     clock.now = at(1, 14, 0);
     expect(runtime.scheduler.tick()).toBe(0);
     expect(llm.calls).toHaveLength(0);
+  });
+
+  it("are never sent to a group, even for a goal that was created there", async () => {
+    start();
+    recordEvent(runtime.db, textEvent("hi", { chat: { id: "group-1", type: "group", line: "shared" } }), clock.now);
+    newGoal("Interview at Acme", { cadence: "once", dueAt: at(1, 10), chatId: "group-1" });
+    runtime.db.prepare("INSERT OR REPLACE INTO checkins (sender_id, chat_id, enabled, time) VALUES (?, 'group-1', 1, '19:00')").run(OWNER);
+    addGoal(runtime.db, { senderId: OWNER, chatId: "group-1", title: "Meditate", cadence: "daily", dueAt: null }, clock.now - DAY);
+    clock.now = at(1, 19, 5); // the follow-up is due and so is the check-in
+    expect(runtime.scheduler.tick()).toBe(0);
+    expect(sends(await drain(runtime))).toEqual([]);
   });
 
   it("wait for the morning when the event ended in the night", async () => {

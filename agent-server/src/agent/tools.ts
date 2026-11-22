@@ -379,7 +379,12 @@ export function normaliseLink(link: string): string | null {
 
 /** Every link in a piece of text the person wrote, normalised. */
 export function linksIn(text: string): string[] {
-  const found = text.match(/\bhttps?:\/\/[^\s<>"']+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s<>"']*)?/gi) ?? [];
+  // Bounded repeats and a length cap keep this linear: the unbounded form took nine seconds on a
+  // hundred thousand characters of "a.a.a.", long enough to stall every chat.
+  const found =
+    text
+      .slice(0, 20_000)
+      .match(/\bhttps?:\/\/[^\s<>"']+|\b(?:[a-z0-9-]{1,63}\.){1,10}[a-z]{2,24}(?:\/[^\s<>"']*)?/gi) ?? [];
   return found.flatMap((link) => normaliseLink(link) ?? []);
 }
 

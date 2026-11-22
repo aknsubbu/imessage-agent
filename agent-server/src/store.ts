@@ -35,6 +35,11 @@ export function recordEvent(db: DB, ev: InboundEvent, now: number): boolean {
   return true;
 }
 
+/** True for a one-on-one chat. Anything private (a briefing, a check-in) is only ever sent to one of these. */
+export function isDirectChat(db: DB, chatId: string): boolean {
+  return get(db, "SELECT type FROM chats WHERE id = ?", chatId)?.type === "dm";
+}
+
 export function chatPlatform(db: DB, chatId: string): string {
   return get(db, "SELECT platform FROM chats WHERE id = ?", chatId)?.platform ?? "imessage";
 }
@@ -900,6 +905,8 @@ export function getCheckins(db: DB, senderId: string): Checkins | undefined {
 
 /** Turns check-ins on at 19:00 the first time someone sets a goal; leaves a choice they already made alone. */
 export function ensureCheckins(db: DB, senderId: string, chatId: string): void {
+  // Check-ins name a person's goals, so they never go to a group.
+  if (!isDirectChat(db, chatId)) return;
   run(db, "INSERT OR IGNORE INTO checkins (sender_id, chat_id) VALUES (?, ?)", senderId, chatId);
   run(db, "UPDATE checkins SET chat_id = ? WHERE sender_id = ?", chatId, senderId);
 }

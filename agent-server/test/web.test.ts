@@ -61,6 +61,44 @@ describe("fetching a link", () => {
     expect(["8.8.8.8", "93.184.216.34", "2606:4700:4700::1111"].some(isPrivateAddress)).toBe(false);
   });
 
+  it("blocks IPv6 forms that wrap an IPv4 address, which a gateway would turn into 127.0.0.1 or the metadata service", async () => {
+    const wrapped = [
+      "::127.0.0.1", "::7f00:1", "64:ff9b::7f00:1", "64:ff9b::127.0.0.1", "64:ff9b::a9fe:a9fe", "64:ff9b:1::7f00:1",
+      "2002:7f00:1::", "2002:a9fe:a9fe::", "::ffff:0:7f00:1", "::ffff:127.0.0.1", "::ffff:7f00:1", "::ffff:a9fe:a9fe",
+      "::ffff:10.0.0.1", "0:0:0:0:0:ffff:7f00:1", "::", "fe80::1%eth0", "2001:0:4136:e378:8000:63bf:3fff:fdd2", "100::1",
+    ];
+    expect(wrapped.filter((address) => !isPrivateAddress(address))).toEqual([]);
+    expect(["::ffff:8.8.8.8", "::ffff:808:808", "2a00:1450:4001:81b::200e"].filter(isPrivateAddress)).toEqual([]);
+    for (const host of ["[::127.0.0.1]", "[64:ff9b::7f00:1]", "[2002:7f00:1::]", "[::ffff:0:7f00:1]", "[::ffff:a9fe:a9fe]"]) {
+      await expect(fetchPage(`http://${host}/`), host).rejects.toBeInstanceOf(BlockedUrlError);
+    }
+  });
+
+  it("stays fast on pages built to make a regex backtrack", () => {
+    const hostile = ["<script>".repeat(200_000), "<!--".repeat(300_000), "<main>".repeat(150_000), "<li ".repeat(300_000), "<".repeat(1_000_000), "<title ".repeat(200_000), "<a".repeat(500_000)];
+    for (const page of hostile) {
+      const started = performance.now();
+      htmlToText(page);
+      expect(performance.now() - started, page.slice(0, 12)).toBeLessThan(1000);
+    }
+  });
+
+  it("finds links in a huge message without stalling", () => {
+    for (const text of ["a.".repeat(50_000), "a-".repeat(50_000) + ".", ("a.".repeat(2000) + "!").repeat(20)]) {
+      const started = performance.now();
+      linksIn(text);
+      expect(performance.now() - started).toBeLessThan(500);
+    }
+  });
+
+  it("still reads an ordinary page the same way after the rewrite", () => {
+    const { title, text } = htmlToText(
+      "<html><head><title>A &amp; B</title><style>p{}</style></head><body><nav>menu</nav><script>x()</script><!-- hidden --><h1>Head</h1><p>One<br>two</p><ul><li>a</li><li>b</li></ul><footer>foot</footer></body></html>",
+    );
+    expect(title).toBe("A & B");
+    expect(text).toBe("Head\nOne\ntwo\n• a\n• b");
+  });
+
   it("re-checks every redirect, so a public page cannot bounce the server to a private address", async () => {
     await expect(fetchPage(`${base}/to-metadata`, { allowAddresses: ["127.0.0.1"] })).rejects.toBeInstanceOf(BlockedUrlError);
   });

@@ -4,7 +4,7 @@
 import type { DB } from "../db.ts";
 import { linesFor } from "../agent/persona.ts";
 import type { Weather } from "../integrations/weather.ts";
-import { type Briefing, activeGoals, getBriefing, getProfile, pendingReminders, saveBriefing } from "../store.ts";
+import { type Briefing, activeGoals, getBriefing, getProfile, isDirectChat, pendingReminders, saveBriefing } from "../store.ts";
 import { clockMinutes, formatLocal, localDayKey, minutesOfDay, parseClock } from "../time.ts";
 import { goalStreak, loggedToday } from "./goals.ts";
 
@@ -30,6 +30,8 @@ export async function configureBriefing(
   signal?: AbortSignal,
 ): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
   const { db, now, timezone } = deps;
+  // A briefing lists someone's reminders and goals, so it only goes to a one-on-one chat, never a group.
+  if (!isDirectChat(db, who.chatId)) return { ok: false, error: "a briefing can only be set up in a one-on-one chat" };
   const patch: Partial<Omit<Briefing, "senderId" | "chatId">> = {};
 
   if (input.time !== undefined) {

@@ -1,3 +1,5 @@
+<img src="../assets/logo.svg" width="72" align="right" alt="imessage-agent logo">
+
 # Running it on a cloud VM
 
 These files set up one small Debian or Ubuntu VM to run both processes under `systemd`. **They have not been run on a real VM yet**; treat the first run as a test.

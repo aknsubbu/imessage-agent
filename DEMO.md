@@ -1,3 +1,5 @@
+<img src="assets/logo.svg" width="72" align="right" alt="imessage-agent logo">
+
 # Demo guide
 
 What the agent can do, and the exact messages to send to show each thing. Every line in a "Send" column is meant to be typed as is. A full run takes about 25 minutes; each act stands alone, so skip around.

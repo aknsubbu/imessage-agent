@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="640" height="320" role="img" aria-label="imessage-agent: a personal assistant that lives in your texts">
+  <title>imessage-agent</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#17144A"/><stop offset="1" stop-color="#0B0A26"/></linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7A66FF"/><stop offset="1" stop-color="#3426C9"/></linearGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FF9A62"/><stop offset="1" stop-color="#FF4F6D"/></linearGradient>
+    <radialGradient id="glow" cx=".5" cy=".38" r=".6"><stop offset="0" stop-color="#5B4BFF" stop-opacity=".5"/><stop offset="1" stop-color="#5B4BFF" stop-opacity="0"/></radialGradient>
+    <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1.400" fill="#FFFFFF" opacity=".07"/></pattern>
+  </defs>
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <rect width="1280" height="640" fill="url(#dots)"/>
+  <rect width="1280" height="640" fill="url(#glow)"/>
+  <g transform="translate(528 96)">
+    <rect width="224" height="224" rx="50" fill="url(#mark)"/>
+    <g transform="scale(.875)">
+      <path fill="#FFF8F0" d="M88 52h80a36 36 0 0 1 36 36v48a36 36 0 0 1-36 36h-52l-34 30c-4 3-9 1-9-4v-28.500A36 36 0 0 1 52 136V88a36 36 0 0 1 36-36z"/>
+      <path fill="url(#spark)" d="M128 74c3 19 13 29 32 32-19 3-29 13-32 32-3-19-13-29-32-32 19-3 29-13 32-32z"/>
+      <circle cx="171" cy="73" r="6" fill="url(#spark)" opacity=".9"/>
+    </g>
+  </g>
+  <g font-family="ui-rounded, 'SF Pro Rounded', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" text-anchor="middle">
+    <text x="640" y="454" font-size="96" font-weight="800" fill="#FFF8F0" letter-spacing="-2" textLength="800" lengthAdjust="spacingAndGlyphs">imessage<tspan fill="#FF8A66">-agent</tspan></text>
+    <text x="640" y="520" font-size="34" font-weight="500" fill="#C9C5F5" textLength="760" lengthAdjust="spacingAndGlyphs">A personal assistant that lives in your texts.</text>
+  </g>
+</svg>

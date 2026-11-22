@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.svg" alt="imessage-agent: a personal assistant that lives in your texts" width="100%">
+</p>
+
 # iMessage agent
 
 Two processes and one shared contract. The design and roadmap are in [PLAN.md](PLAN.md); [DEMO.md](DEMO.md) is a feature list with the exact messages to send to show each thing.
@@ -13,6 +17,7 @@ Two processes and one shared contract. The design and roadmap are in [PLAN.md](P
 | Doc | What it covers |
 |---|---|
 | [DEMO.md](DEMO.md) | Every feature, a demo script of messages to send, and troubleshooting |
+| [SECURITY.md](SECURITY.md) | What is enforced, what is knowingly left open, how to report a problem |
 | [PLAN.md](PLAN.md) | Architecture, Groq free-tier facts, the feature catalogue and what is built |
 | [deploy/README.md](deploy/README.md) | Running both processes on a cloud VM, updating, backups |
 | [imessage-chatbot/README.md](imessage-chatbot/README.md) | The bridge on its own |

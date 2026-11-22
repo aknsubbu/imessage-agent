@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 360" width="1280" height="360" role="img" aria-label="imessage-agent: a personal assistant that lives in your texts">
+  <title>imessage-agent</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#17144A"/><stop offset="1" stop-color="#0B0A26"/></linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7A66FF"/><stop offset="1" stop-color="#3426C9"/></linearGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FF9A62"/><stop offset="1" stop-color="#FF4F6D"/></linearGradient>
+    <linearGradient id="you" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7A66FF"/><stop offset="1" stop-color="#5B4BFF"/></linearGradient>
+    <radialGradient id="glow" cx=".82" cy=".1" r=".7"><stop offset="0" stop-color="#5B4BFF" stop-opacity=".55"/><stop offset="1" stop-color="#5B4BFF" stop-opacity="0"/></radialGradient>
+    <pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1.400" fill="#FFFFFF" opacity=".07"/></pattern>
+    <clipPath id="frame"><rect width="1280" height="360" rx="28"/></clipPath>
+  </defs>
+  <g clip-path="url(#frame)">
+    <rect width="1280" height="360" fill="url(#bg)"/>
+    <rect width="1280" height="360" fill="url(#dots)"/>
+    <rect width="1280" height="360" fill="url(#glow)"/>
+  </g>
+
+  <!-- mark -->
+  <g transform="translate(64 64)">
+    <rect width="132" height="132" rx="30" fill="url(#mark)"/>
+    <g transform="scale(.5156)">
+      <path fill="#FFF8F0" d="M88 52h80a36 36 0 0 1 36 36v48a36 36 0 0 1-36 36h-52l-34 30c-4 3-9 1-9-4v-28.500A36 36 0 0 1 52 136V88a36 36 0 0 1 36-36z"/>
+      <path fill="url(#spark)" d="M128 74c3 19 13 29 32 32-19 3-29 13-32 32-3-19-13-29-32-32 19-3 29-13 32-32z"/>
+      <circle cx="171" cy="73" r="6" fill="url(#spark)" opacity=".9"/>
+    </g>
+  </g>
+
+  <!-- words -->
+  <g font-family="ui-rounded, 'SF Pro Rounded', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+    <text x="64" y="262" font-size="64" font-weight="800" fill="#FFF8F0" letter-spacing="-1.500" textLength="543" lengthAdjust="spacingAndGlyphs">imessage<tspan fill="#FF8A66">-agent</tspan></text>
+    <text x="66" y="304" font-size="25" font-weight="500" fill="#C9C5F5" textLength="564" lengthAdjust="spacingAndGlyphs">A personal assistant that lives in your texts.</text>
+  </g>
+
+  <!-- a conversation. textLength pins each line to its bubble, so a wider fallback font cannot overflow it -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="21">
+    <rect x="734" y="52" width="498" height="52" rx="26" fill="url(#you)"/>
+    <text x="758" y="85" fill="#FFFFFF" textLength="450" lengthAdjust="spacingAndGlyphs">remind me tomorrow 8am to renew insurance</text>
+
+    <rect x="700" y="124" width="335" height="52" rx="26" fill="#FFF8F0"/>
+    <text x="726" y="157" fill="#1B1747" textLength="283" lengthAdjust="spacingAndGlyphs">Done. Tomorrow at 8:00 am.</text>
+
+    <rect x="700" y="196" width="474" height="52" rx="26" fill="#FFF8F0"/>
+    <text x="726" y="229" fill="#1B1747" textLength="422" lengthAdjust="spacingAndGlyphs">Evening check-in: Meditate? Yes or no.</text>
+
+    <rect x="1069" y="268" width="163" height="52" rx="26" fill="url(#you)"/>
+    <text x="1093" y="301" fill="#FFFFFF" textLength="115" lengthAdjust="spacingAndGlyphs">yes, 20 min</text>
+  </g>
+</svg>

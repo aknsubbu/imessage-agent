@@ -1,3 +1,5 @@
+<img src="../assets/logo.svg" width="72" align="right" alt="imessage-agent logo">
+
 # imessage-chatbot (the bridge)
 
 The only process that talks to [Spectrum](https://photon.codes/docs/spectrum-ts) and Photon's cloud iMessage. It holds no conversation logic, so it rarely needs a restart: it forwards every inbound message, reaction and receipt to the agent server, and carries out the actions the server sends back (send, react, typing, read receipts, and so on). The decisions all live in [`../agent-server`](../agent-server); the shared message types and request signing are in [`../protocol`](../protocol).

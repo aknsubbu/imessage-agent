@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="imessage-agent logo: a speech bubble with a spark">
+  <title>imessage-agent: spark</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7A66FF"/><stop offset="1" stop-color="#3426C9"/></linearGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FF9A62"/><stop offset="1" stop-color="#FF4F6D"/></linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="58" fill="url(#bg)"/>
+  <path fill="#FFF8F0" d="M88 52h80a36 36 0 0 1 36 36v48a36 36 0 0 1-36 36h-52l-34 30c-4 3-9 1-9-4v-28.5A36 36 0 0 1 52 136V88a36 36 0 0 1 36-36z"/>
+  <path fill="url(#spark)" d="M128 74c3 19 13 29 32 32-19 3-29 13-32 32-3-19-13-29-32-32 19-3 29-13 32-32z"/>
+  <circle cx="171" cy="73" r="6" fill="url(#spark)" opacity=".9"/>
+</svg>

@@ -1,3 +1,5 @@
+<img src="assets/logo.svg" width="72" align="right" alt="imessage-agent logo">
+
 # iMessage agent server — plan
 
 Written 2026-10-08, revised the same day for two changes: a pool of three Groq keys, and cloud hosting instead of your Mac. Covers the architecture, the Groq free-tier strategy, the full feature catalogue by phase, and the decisions that are yours to make.

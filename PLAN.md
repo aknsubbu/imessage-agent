@@ -2,6 +2,14 @@
 
 Written 2026-10-08, revised the same day for two changes: a pool of three Groq keys, and cloud hosting instead of your Mac. Covers the architecture, the Groq free-tier strategy, the full feature catalogue by phase, and the decisions that are yours to make.
 
+## Status (2026-11-21)
+
+Built and tested (188 tests): the bridge and agent server, the key pool and usage ledger, restart recovery, voice memos and photos, memory, lists, reminders with tapback, snooze, nudge and streaks, web search and link reading with injection safeguards, and, since the last revision, **personas** (six voices, a name, a style note, style mirroring), **goals** with evening check-ins, a Sunday review and event follow-ups, an opt-in **morning briefing** (Open-Meteo weather), **fact-check mode**, and **Todoist and Notion sync** (built, off by default). [DEMO.md](DEMO.md) lists every feature with the messages to show it.
+
+Not built: calendar, email, smart home, groups, image and spoken replies, an external uptime check, the dashboard. Deployment to a VM is scripted but has not been run on a real one.
+
+Still unconfirmed on the live system: whether messages the agent starts (reminders, check-ins, the briefing) reach you on the shared Photon line. Test with "remind me in 2 minutes to stretch" before relying on any of them.
+
 ## 1. Summary
 
 - **Shape:** two processes on one small always-on cloud VM, so nothing depends on your laptop. The existing `imessage-chatbot` becomes a thin **bridge** that only talks to Spectrum. A new **agent server** owns everything else: memory, the Groq calls, tools, scheduling and the token budget.
@@ -63,6 +71,8 @@ What follows from this:
 | What do photos and voice memos arrive as? | HEIC (about 6 MB) and CAF with Opus audio; both are converted on the server |
 | Does a plain reply to you go through on the shared line? | Yes |
 | Does Groq's built-in web search work on a free key? | Yes. One search costs between about 2,400 and 8,000 tokens, charged to the small model's separate budget |
+| What does a request cost with fifteen tools and a persona? | About 1,800 input tokens (measured 2026-11-21 on gpt-oss-120b); the server's own estimator over-counts by about three times on purpose |
+| Does the model pick the new tools from plain English? | Yes, in a live probe: "I want to meditate every day" added a goal, "be more of a coach and call yourself Juno" set the persona, "send me the weather every morning at 7, I'm in Chennai" set the briefing |
 
 ### Still not confirmed
 
@@ -200,16 +210,34 @@ Your conversations and the agent's memory will live on that VM, which is a chang
 
 ### Data model (SQLite tables)
 
-`users`, `chats`, `messages` (the inbox journal, unique on event id), `turns` (the ledger), `actions` (outbox and acknowledgements), `usage` (per key and model, per minute and per day), `profile_facts`, `summaries`, `notes`, `reminders`, `tool_cache`, `failures`, `allowlist`, `flags`, `media`.
+As built (`agent-server/src/db.ts`, upgraded in place on start by numbered migrations):
+
+- **Conversation:** `chats` (with the rolling summary and reset point), `events` (the inbox journal, unique on event id), `messages` (with a full-text index, `messages_fts`), `turns` (the ledger), `actions` (the outbox and acknowledgements).
+- **Budget and safety:** `usage` (per key and model, per day), `allowlist`, `failures`.
+- **Memory:** `facts`, `notes` (lists).
+- **Reminders:** `reminders`, `reminder_runs` (each delivery, for done, snooze, nudge and streaks).
+- **Personality:** `profiles` (voice, name, style note, mirroring), per person.
+- **Goals:** `goals`, `goal_logs`, `goal_checkins` (one row per check-in bubble), `checkins` (when a person's check-in and review go out).
+- **Briefing:** `briefings` (time, city, units, the day it last went out).
+- **Integrations:** `external_refs` (the copy of a reminder or list item in Todoist or Notion).
+
+The earlier sketch also listed `summaries`, `tool_cache`, `flags` and `media`; none were needed, and media lives on disk and is deleted after use.
 
 ### Repository layout
 
 ```
 imessage-agent/
-  imessage-chatbot/   existing bridge (its own git repo today)
-  agent-server/       new
+  imessage-chatbot/   the bridge (Spectrum only)
+  agent-server/       the agent server
+    src/agent/        prompt, persona, tools, commands, turn loop
+    src/core/         intake, per-chat lanes, reminders, goals, briefing, proactive messages, scheduler
+    src/llm/          key pool, OpenAI-compatible client, audio, injection guard, fake model
+    src/integrations/ Open-Meteo weather, Todoist and Notion sync
+    src/web/          page fetcher and web search
+    test/             vitest suites, run on a fake model
   protocol/           shared types and zod schemas
-  PLAN.md
+  deploy/             setup script, systemd units, backups
+  README.md  DEMO.md  PLAN.md
 ```
 
 ## 4. Phases
@@ -219,7 +247,7 @@ imessage-agent/
 | **0 — Spike and probes** (about a day) | Prove the loop and settle the open questions | A text gets a Groq reply through `POST /v1/turn`; the probe script has answered the table in section 2; line type known |
 | **1 — Solid conversationalist** | Something you would keep texting | Bursts get one reply; interrupting works; no duplicate or lost reply across a server restart; `/usage` is accurate across all keys; the terminal harness runs with a fake Groq; both processes are running on the cloud VM |
 | **2 — Daily-usable assistant** | Tools, media, memory, reminders | Voice memo, photo and link each get a useful answer; reminders fire; `/memory` and `/forget` work; runs unattended on the VM for a week, with backups and the uptime check in place |
-| **3 — Delight** | iMessage-native expression and personal integrations | Effects, polls and tapback feedback in use; calendar connected; dashboard shows quota and recent turns |
+| **3 — Delight** | iMessage-native expression and personal integrations | Effects, polls and tapback feedback in use; calendar connected; dashboard shows quota and recent turns. **Partly done:** personas, goals and check-ins, the briefing, fact-check mode, tapback feedback on reminders and check-ins, and Todoist and Notion sync. Calendar, effects, polls and the dashboard remain |
 | **4 — Ambitious** | Groups, long tasks, other channels | Per feature |
 
 Phase 0 also fixes the bridge: handle `reply` and `group` content, stop awaiting inside the loop, call `app.stop()` on SIGINT/SIGTERM, and import from `spectrum-ts/providers/imessage` (the current import only resolves by accident of hoisting).
@@ -246,9 +274,9 @@ Phase 0 also fixes the bridge: handle `reply` and `group` content, stop awaiting
 | Working marker | Instant reaction on slow turns, removed when the answer lands | 2 | 0 | |
 | Green-bubble fallback | Plain single messages when the other side is on SMS/RCS | 2 | 0 | |
 | First-contact onboarding | Short intro, asks your name and time zone, shares its contact card | 2 | low | |
-| Personas | `/persona coach`, `terse`, `tutor`, or your own | 2 | 0 | |
+| Personas | `/persona coach`, `terse`, `tutor`, `deadpan`, `roast`, or your own note and name — **built**: a prompt block plus fixed wording for nudges, check-ins and the briefing | done | 0 | |
 | Preferences and quiet hours | Reply length, tone, units, do-not-disturb | 2 | 0 | |
-| Style mirroring | Drifts toward your lowercase, length and emoji habits | 3 | low | |
+| Style mirroring | Drifts toward your lowercase, length and emoji habits — **built**, opt-in with `/persona mirror on`, worked out locally | done | 0 | |
 
 ### iMessage-native expression
 
@@ -276,6 +304,7 @@ Phase 0 also fixes the bridge: handle `reply` and `group` content, stop awaiting
 | Voice translation | A memo in another language comes back in English | 2 | low | |
 | Photo and screenshot understanding | Ask about a menu, receipt or error screen | 2 | high | |
 | Send a link, get the gist | Five-line summary, then follow-up questions | 2 | med | |
+| Fact-check mode | "Is this true?", `/check <claim>`, or a swipe-reply with `/check`: a verdict (Likely true, Likely false, Mixed, Can't verify) with the key fact and where it comes from — **built** | done | med | |
 | PDF and document digests | Key points, dates and amounts from a file | 2–3 | high | |
 | Snap to action | Photograph a flyer → "Add to calendar?" | 3 | med | |
 | Voice journal | Nightly memo filed as an entry; weekly reflection | 3 | med | reg |
@@ -304,7 +333,7 @@ Phase 0 also fixes the bridge: handle `reply` and `group` content, stop awaiting
 | Inbox triage | "Anything important in my email?"; drafts sent only on approval | 3 | high | Gmail OAuth |
 | Smart home | "Turn off the living room lights" | 3 | med | Home Assistant reachable from the VM |
 | Apple Reminders and Notes sync | Items also appear in Apple's apps | 4 | low | Mac helper |
-| Todoist or Notion sync | Same, with a static token | 3 | low | |
+| Todoist or Notion sync | Same, with a static token — **built, off by default** (needs `INTEGRATIONS` and a token); reminders and list items are copied, and Todoist tasks close when the reminder is done | done | 0 | token |
 | Image replies | "Draw a birthday card" (Cloudflare Workers AI, about 170 a day free) | 3 | 0 | |
 | Spoken replies | A short voice bubble | 3 | low | |
 | Ready-made tool servers (MCP) | Add GitHub, Notion, Home Assistant and others with little code | 3 | med | filter tools to fit the budget |
@@ -316,10 +345,10 @@ Phase 0 also fixes the bridge: handle `reply` and `group` content, stop awaiting
 |---|---|---|---|---|
 | Reminders | "Remind me Friday 5pm to call the bank"; recurring too | 2 | low | reg |
 | Tapback to finish, reply to snooze | 👍 marks done, "1h" snoozes | 2 | 0 | reg |
-| Morning briefing | Weather, calendar, due reminders in one message | 3 | low | reg |
+| Morning briefing | Weather (Open-Meteo), due reminders and open goals in one message — **built**, opt-in with `/briefing`; calendar not included | done | 0 | reg |
 | Watchers | "Tell me if it will rain before my 6am run" | 3 | low | reg |
-| Habit tracker | Daily check-in; 👍 logs it; streaks | 3 | 0 | reg |
-| Follow-up check-ins | Asks how Thursday's interview went — once | 3 | med | reg |
+| Habit tracker | Daily check-in; 👍 logs it; streaks; a Sunday review — **built** as goals (`/goals`, one check-in bubble per goal, "yes"/"no" handled without the model) | done | 0 | reg |
+| Follow-up check-ins | Asks how Thursday's interview went — once — **built**: a goal with a date is asked about a few hours after, never at night | done | 0 | reg |
 | Texted usage reports | Morning digest of turns, tokens, failures | 3 | 0 | reg |
 
 ### Budget and reliability
@@ -418,7 +447,7 @@ Reacting to your edits, your unsends, or the fact that you are still typing. Clo
 2. **Photon line.** Shared (Free or Pro) or dedicated (Business)? Run `photon spectrum lines list`. On a shared line, register yourself as a project user in the Photon dashboard or reminders cannot reach you.
 3. **Who uses it.** Just you, or family and friends too? This decides whether fair-share quotas and invites are phase 1 or phase 2.
 4. **Which cloud host.** Google Cloud's free `e2-micro` is the recommendation and needs a card on file. Oracle's free tier is roomier with a reclaim risk. Fly.io is about $2 a month with the least fuss. Which one?
-5. **Which integrations first.** Calendar, email, smart home, Todoist or Notion — pick one or two for phase 3. Apple Reminders and Notes are out of reach from the cloud.
+5. **Which integrations next.** Todoist and Notion sync are built and off (the weather briefing uses Open-Meteo, which needs no account). Calendar, email and smart home are still open; a read-only calendar from a secret iCal URL needs no OAuth and is the cheapest next step. Email is the riskiest, because it is the usual route for prompt injection. Apple Reminders and Notes are out of reach from the cloud.
 6. **Telemetry.** Keep sending trace data (including contacts' phone numbers inside chat identifiers) to Photon, or turn it back off?
 7. **Repository.** Make `imessage-agent/` one repository holding the bridge, the server and the shared protocol, or keep the bridge's own git repo separate?
 

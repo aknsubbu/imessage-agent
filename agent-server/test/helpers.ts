@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type Action, type InboundEvent, signedHeaders } from "../../protocol/index.ts";
 import type { Config } from "../src/config.ts";
 import { openDb } from "../src/db.ts";
+import { noWeather } from "../src/integrations/weather.ts";
 import type { LLM } from "../src/llm/types.ts";
 import { createRuntime, type RuntimeOverrides } from "../src/runtime.ts";
 
@@ -22,6 +23,8 @@ export function testConfig(patch: Partial<Config> = {}): Config {
     nudgeAfterMinutes: 30,
     quietHours: [22, 8],
     ownerIds: [OWNER],
+    integrations: {},
+    integrationProblems: [],
     llmMode: "fake",
     slots: [],
     models: { chat: ["m-small", "m-large"], tools: ["m-large"], vision: ["m-vision"], summary: ["m-small"], search: ["m-small"] },
@@ -30,7 +33,8 @@ export function testConfig(patch: Partial<Config> = {}): Config {
 }
 
 export function makeRuntime(llm?: LLM, patch: Partial<Config> = {}, overrides: RuntimeOverrides = {}) {
-  return createRuntime(testConfig(patch), { db: openDb(":memory:"), llm, log: () => {}, ...overrides });
+  // Tests never reach the network: weather is offline unless a test supplies its own.
+  return createRuntime(testConfig(patch), { db: openDb(":memory:"), llm, log: () => {}, weather: noWeather, ...overrides });
 }
 
 export function textEvent(text: string, patch: Partial<InboundEvent> = {}): InboundEvent {

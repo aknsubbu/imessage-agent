@@ -19,7 +19,9 @@ export function trimMiddle(text: string, maxTokens: number): string {
 
 export function buildMessages(opts: {
   system: string;
-  /** Saved facts and the running summary; sent as a second system message when present. */
+  /** The persona block; sent as a second system message so the core prompt stays byte-stable. */
+  persona?: string;
+  /** Saved facts and the running summary; sent as a system message when present. */
   memory?: string;
   contextLine: string;
   history: MessageRow[];
@@ -27,7 +29,8 @@ export function buildMessages(opts: {
   budgetTokens: number;
 }): ChatMessage[] {
   // Walk back from the newest message until the budget is spent.
-  let left = opts.budgetTokens - estimateTokens(opts.memory ?? "") - estimateTokens(opts.contextLine);
+  let left =
+    opts.budgetTokens - estimateTokens(opts.persona ?? "") - estimateTokens(opts.memory ?? "") - estimateTokens(opts.contextLine);
   const kept: { role: "user" | "assistant"; text: string }[] = [];
   for (let i = opts.history.length - 1; i >= 0; i--) {
     const row = opts.history[i]!;
@@ -53,6 +56,7 @@ export function buildMessages(opts: {
   }
 
   const messages: ChatMessage[] = [{ role: "system", content: opts.system }];
+  if (opts.persona) messages.push({ role: "system", content: opts.persona });
   if (opts.memory) messages.push({ role: "system", content: opts.memory });
   turns.forEach((turn, i) => {
     if (i === turns.length - 1) messages.push({ role: "system", content: opts.contextLine });

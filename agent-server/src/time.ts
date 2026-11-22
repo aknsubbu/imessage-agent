@@ -87,3 +87,38 @@ export function nextOccurrence(dueMs: number, repeat: Repeat, timezone: string, 
   }
   return next > afterMs ? next : null;
 }
+
+/** The local calendar date of an instant, as "YYYY-MM-DD". */
+export function localDayKey(utcMs: number, timezone: string): string {
+  const p = localParts(utcMs, timezone);
+  return dayKey(p.year, p.month, p.day);
+}
+
+/** "YYYY-MM-DD" for a year, month and day; the day may overflow or underflow and the calendar is walked correctly. */
+export function dayKey(year: number, month: number, day: number): string {
+  return new Date(Date.UTC(year, month - 1, day)).toISOString().slice(0, 10);
+}
+
+/** Minutes after local midnight. */
+export function minutesOfDay(utcMs: number, timezone: string): number {
+  const p = localParts(utcMs, timezone);
+  return p.hour * 60 + p.minute;
+}
+
+/** "19:00", "7pm", "7:30 pm", "0800" or "8" read as a time of day; "HH:MM" in 24-hour form, or null. */
+export function parseClock(input: string): string | null {
+  const m = /^(\d{1,2})(?::?(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?$/i.exec(input.trim());
+  if (!m) return null;
+  let hour = Number(m[1]);
+  const minute = Number(m[2] ?? 0);
+  const meridiem = m[3]?.toLowerCase().replace(/\./g, "");
+  if (meridiem) {
+    if (hour < 1 || hour > 12) return null;
+    hour = (hour % 12) + (meridiem === "pm" ? 12 : 0);
+  }
+  if (hour > 23 || minute > 59) return null;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+/** An "HH:MM" string as minutes after midnight. */
+export const clockMinutes = (clock: string): number => Number(clock.slice(0, 2)) * 60 + Number(clock.slice(3, 5));

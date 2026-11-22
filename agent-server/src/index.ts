@@ -30,6 +30,9 @@ const server = serve({ fetch: runtime.app.fetch, hostname: config.host, port: co
       : `Groq, ${config.slots.length} key${config.slots.length === 1 ? "" : "s"}`;
   console.log(`[agent] listening on http://${info.address}:${info.port} — ${model}`);
   if (config.ownerIds.length === 0) console.log("[agent] no OWNER_IDS set: the first person to text becomes the owner");
+  const on = Object.keys(config.integrations);
+  console.log(`[agent] integrations: ${on.length ? `${on.join(", ")} (reminders and list items are copied there)` : "none on"}`);
+  for (const problem of config.integrationProblems) console.warn(`[agent] ${problem}`);
 });
 
 let stopping = false;

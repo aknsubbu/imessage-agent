@@ -178,6 +178,84 @@ const MIGRATIONS: string[] = [
   CREATE INDEX reminder_runs_chat ON reminder_runs (chat_id, sent_at);
   CREATE INDEX reminder_runs_reminder ON reminder_runs (reminder_id, due_at);
   `,
+  `
+  -- How the agent talks to one person: a preset voice, an optional name of its
+  -- own, a short note in their words, and whether it drifts toward their style.
+  CREATE TABLE profiles (
+    sender_id TEXT PRIMARY KEY,
+    agent_name TEXT,
+    preset TEXT NOT NULL DEFAULT 'friend',
+    note TEXT NOT NULL DEFAULT '',
+    mirror INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL
+  );
+
+  -- An opt-in message each morning. last_sent_day is the local date it last went out.
+  CREATE TABLE briefings (
+    sender_id TEXT PRIMARY KEY,
+    chat_id TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    time TEXT NOT NULL DEFAULT '08:00',
+    city TEXT,
+    lat REAL,
+    lon REAL,
+    fahrenheit INTEGER NOT NULL DEFAULT 0,
+    last_sent_day TEXT
+  );
+
+  -- Things a person is working toward, and the days they moved them forward.
+  CREATE TABLE goals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender_id TEXT NOT NULL,
+    chat_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    cadence TEXT NOT NULL DEFAULT 'daily',   -- daily | weekly | once
+    status TEXT NOT NULL DEFAULT 'active',   -- active | done | dropped
+    due_at INTEGER,                          -- an event to follow up on ("interview Thursday")
+    followed_up_at INTEGER,
+    created_at INTEGER NOT NULL,
+    ended_at INTEGER
+  );
+  CREATE INDEX goals_sender ON goals (sender_id, status);
+
+  CREATE TABLE goal_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    goal_id INTEGER NOT NULL,
+    at INTEGER NOT NULL,
+    note TEXT NOT NULL DEFAULT ''
+  );
+  CREATE INDEX goal_logs_goal ON goal_logs (goal_id, at);
+
+  -- One row per check-in bubble, so a thumbs-up or "yes" on it can be matched to its goal.
+  CREATE TABLE goal_checkins (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    goal_id INTEGER NOT NULL,
+    chat_id TEXT NOT NULL,
+    sent_at INTEGER NOT NULL,
+    message_id TEXT,
+    answered_at INTEGER
+  );
+  CREATE INDEX goal_checkins_chat ON goal_checkins (chat_id, sent_at);
+
+  -- When a person's daily check-in and Sunday review go out. Created with their first goal.
+  CREATE TABLE checkins (
+    sender_id TEXT PRIMARY KEY,
+    chat_id TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    time TEXT NOT NULL DEFAULT '19:00',
+    last_day TEXT,
+    last_review_day TEXT
+  );
+
+  -- The copy of a local item in an outside app (Todoist, Notion), so it can be closed there too.
+  CREATE TABLE external_refs (
+    provider TEXT NOT NULL,
+    kind TEXT NOT NULL,                      -- reminder | list_item
+    local_id INTEGER NOT NULL,
+    remote_id TEXT NOT NULL,
+    PRIMARY KEY (provider, kind, local_id)
+  );
+  `,
 ];
 
 export function openDb(path: string): DB {

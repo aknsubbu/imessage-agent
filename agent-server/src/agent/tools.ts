@@ -1,21 +1,34 @@
 // The tools the model can call. All of them are local: they read and write
 // this server's own database and need no outside account.
+import { configureBriefing } from "../core/briefing.ts";
+import { describeGoal, goalStreak } from "../core/goals.ts";
 import type { DB } from "../db.ts";
+import type { Sync } from "../integrations/sync.ts";
+import type { Weather } from "../integrations/weather.ts";
 import type { ToolCall, ToolDef } from "../llm/types.ts";
 import {
+  activeGoals,
   addFact,
+  addGoal,
   addNotes,
   addReminder,
   cancelReminders,
+  endGoal,
+  ensureCheckins,
+  getCheckins,
   listNames,
   listNotes,
+  logGoal,
+  matchGoals,
   pendingReminders,
   removeFacts,
-  removeNotes,
+  removeNoteRows,
+  saveProfile,
   searchMessages,
 } from "../store.ts";
 import { formatLocal, parseLocal, type Repeat } from "../time.ts";
 import type { Web } from "../web/web.ts";
+import { cleanName, cleanNote, isPreset, PRESET_NAMES } from "./persona.ts";
 
 export type ToolContext = {
   db: DB;
@@ -24,6 +37,11 @@ export type ToolContext = {
   timezone: string;
   now: () => number;
   web: Web;
+  weather: Weather;
+  /** Copies reminders and list items into Todoist or Notion; does nothing unless those are switched on. */
+  sync: Sync;
+  /** The name used when this person has not given the agent one. */
+  defaultName: string;
   /** Links found in the person's own messages. `read_link` opens nothing else. */
   userLinks: string[];
   signal?: AbortSignal;
@@ -88,8 +106,11 @@ const TOOLS: Tool[] = [
     run: ({ list, items }, ctx) => {
       const clean = (Array.isArray(items) ? items : [items]).map((item) => String(item ?? "").trim()).filter(Boolean);
       if (clean.length === 0) return "error: no items";
-      addNotes(ctx.db, ctx.senderId, String(list ?? "notes"), clean.slice(0, 30), ctx.now());
-      return `added ${clean.length} to ${String(list ?? "notes").toLowerCase()}`;
+      const name = String(list ?? "notes").trim().toLowerCase() || "notes";
+      const added = clean.slice(0, 30);
+      const ids = addNotes(ctx.db, ctx.senderId, name, added, ctx.now());
+      ids.forEach((id, i) => ctx.sync.created({ kind: "list_item", id, text: added[i]!, list: name }));
+      return `added ${clean.length} to ${name}`;
     },
   },
   {
@@ -112,8 +133,9 @@ const TOOLS: Tool[] = [
     parameters: schema({ list: str("List name."), item: str("Words the item contains, or '*'.") }, ["list", "item"]),
     writes: true,
     run: ({ list, item }, ctx) => {
-      const removed = removeNotes(ctx.db, ctx.senderId, String(list ?? "notes"), String(item ?? "").trim() || "\u0000");
-      return removed.length ? `removed: ${removed.join("; ")}` : "nothing matched";
+      const removed = removeNoteRows(ctx.db, ctx.senderId, String(list ?? "notes"), String(item ?? "").trim() || "\u0000");
+      for (const row of removed) ctx.sync.closed("list_item", row.id);
+      return removed.length ? `removed: ${removed.map((row) => row.text).join("; ")}` : "nothing matched";
     },
   },
   {
@@ -136,6 +158,7 @@ const TOOLS: Tool[] = [
       if (!body) return "error: text is empty";
       const how: Repeat = REPEATS.includes(repeat) ? repeat : "none";
       const id = addReminder(ctx.db, { chatId: ctx.chatId, senderId: ctx.senderId, text: body.slice(0, 300), dueAt, repeat: how }, ctx.now());
+      ctx.sync.created({ kind: "reminder", id, text: body.slice(0, 300), dueAt });
       return `reminder ${id} set for ${formatLocal(dueAt, ctx.timezone)}${how === "none" ? "" : `, repeating ${how}`}`;
     },
   },
@@ -162,7 +185,122 @@ const TOOLS: Tool[] = [
         id: Number.isInteger(id) ? id : undefined,
         about: about ? String(about) : undefined,
       });
+      for (const r of cancelled) ctx.sync.closed("reminder", r.id);
       return cancelled.length ? `cancelled: ${cancelled.map((r) => r.text).join("; ")}` : "no reminder matched";
+    },
+  },
+  {
+    name: "set_persona",
+    description: "Change how you sound for this person, or what they call you. Pass only what they asked to change.",
+    parameters: schema(
+      {
+        preset: { type: "string", enum: [...PRESET_NAMES] },
+        name: str("What they want to call you."),
+        note: str("Their words about your style; empty clears it."),
+        mirror: { type: "boolean", description: "Match how they text." },
+      },
+      [],
+    ),
+    writes: true,
+    run: ({ preset, name, note, mirror }, ctx) => {
+      const patch: Parameters<typeof saveProfile>[2] = {};
+      if (preset !== undefined) {
+        if (!isPreset(String(preset))) return `error: the voices are ${PRESET_NAMES.join(", ")}`;
+        patch.preset = String(preset);
+      }
+      if (name !== undefined) patch.agentName = cleanName(String(name)) || null;
+      if (note !== undefined) patch.note = cleanNote(String(note));
+      if (typeof mirror === "boolean") patch.mirror = mirror;
+      if (Object.keys(patch).length === 0) return "error: nothing to change was given";
+      const now = saveProfile(ctx.db, ctx.senderId, patch, ctx.now());
+      return `persona now: voice ${now.preset}, name ${now.agentName ?? ctx.defaultName}${now.note ? `, note "${now.note}"` : ""}${now.mirror ? ", matching their texting style" : ""}`;
+    },
+  },
+  {
+    name: "goal",
+    description: "Track the person's goals and habits: add (daily, weekly or once; `due` for an event), log (they did it today), done, drop, list.",
+    parameters: schema(
+      {
+        action: { type: "string", enum: ["add", "log", "done", "drop", "list"] },
+        title: str("For add: the goal, e.g. 'Meditate'."),
+        about: str("Words in the goal's title."),
+        id: { type: "integer", description: "Goal number." },
+        cadence: { type: "string", enum: ["daily", "weekly", "once"] },
+        due: str("Event time, local YYYY-MM-DDTHH:MM."),
+        note: str("How it went."),
+      },
+      ["action"],
+    ),
+    writes: true,
+    run: ({ action, title, about, id, cadence, due, note }, ctx) => {
+      const goals = activeGoals(ctx.db, ctx.senderId);
+      if (action === "list") {
+        return goals.length ? goals.map((g, i) => `${i + 1}. ${describeGoal(ctx.db, g, ctx.timezone, ctx.now())}`).join("\n") : "no goals yet";
+      }
+      if (action === "add") {
+        const text = String(title ?? "").trim().slice(0, 120);
+        if (!text) return "error: a title is needed";
+        if (goals.some((g) => g.title.toLowerCase() === text.toLowerCase())) return `already tracking "${text}"`;
+        if (goals.length >= 8) return "error: eight goals is the limit; ask which one to drop first";
+        let dueAt: number | null = null;
+        if (due) {
+          dueAt = parseLocal(String(due), ctx.timezone);
+          if (dueAt === null) return "error: `due` must look like 2026-10-09T17:00";
+          if (dueAt <= ctx.now()) return `error: ${formatLocal(dueAt, ctx.timezone)} is in the past; ask when they meant`;
+        }
+        const how: "daily" | "weekly" | "once" = cadence === "weekly" || cadence === "once" ? cadence : dueAt ? "once" : "daily";
+        const goalId = addGoal(ctx.db, { senderId: ctx.senderId, chatId: ctx.chatId, title: text, cadence: how, dueAt }, ctx.now());
+        if (how !== "once") ensureCheckins(ctx.db, ctx.senderId, ctx.chatId);
+        const checkins = getCheckins(ctx.db, ctx.senderId);
+        const when = how !== "once" && checkins?.enabled ? `; check-ins at ${checkins.time}` : "";
+        const asks = dueAt ? `; will ask how it went after ${formatLocal(dueAt, ctx.timezone)}` : "";
+        return `goal ${goalId} added: ${text} (${how})${when}${asks}`;
+      }
+      if (action !== "log" && action !== "done" && action !== "drop") return "error: action must be add, log, done, drop or list";
+      const found = matchGoals(ctx.db, ctx.senderId, { id: Number.isInteger(id) ? id : undefined, about: about ? String(about) : undefined });
+      const target = found.length ? found : goals.length === 1 && !about && !Number.isInteger(id) ? goals : [];
+      if (target.length === 0) return goals.length ? `error: no goal matched; the goals are ${goals.map((g) => g.title).join(", ")}` : "error: there are no goals yet";
+      if (target.length > 1) return `error: several goals match (${target.map((g) => g.title).join(", ")}); ask which one`;
+      const goal = target[0]!;
+      if (action === "log" || action === "done") logGoal(ctx.db, goal.id, String(note ?? "").trim().slice(0, 200), ctx.now());
+      if (action === "log") {
+        const streak = goalStreak(ctx.db, goal, ctx.timezone, ctx.now());
+        return `logged ${goal.title}${streak >= 2 ? `; ${streak} days in a row` : ""}`;
+      }
+      endGoal(ctx.db, goal.id, action === "done" ? "done" : "dropped", ctx.now());
+      return `${action === "done" ? "finished" : "dropped"}: ${goal.title}`;
+    },
+  },
+  {
+    name: "set_briefing",
+    description: "Set up, change or stop a daily morning message (weather, today's reminders, open goals). Any setting turns it on.",
+    parameters: schema(
+      {
+        enabled: { type: "boolean", description: "False stops it." },
+        time: str("Local time, e.g. 08:00 or 7:30am."),
+        city: str("City for the weather; empty removes it."),
+        fahrenheit: { type: "boolean" },
+      },
+      [],
+    ),
+    writes: true,
+    // The city name goes to Open-Meteo to be turned into a place.
+    egress: true,
+    run: async ({ enabled, time, city, fahrenheit }, ctx) => {
+      const given = [enabled, time, city, fahrenheit].some((value) => value !== undefined);
+      if (!given) return "error: nothing to change was given";
+      const result = await configureBriefing(
+        { db: ctx.db, weather: ctx.weather, timezone: ctx.timezone, now: ctx.now },
+        { senderId: ctx.senderId, chatId: ctx.chatId },
+        {
+          enabled: typeof enabled === "boolean" ? enabled : undefined,
+          time: time === undefined ? undefined : String(time),
+          city: city === undefined ? undefined : String(city),
+          fahrenheit: typeof fahrenheit === "boolean" ? fahrenheit : undefined,
+        },
+        ctx.signal,
+      );
+      return result.ok ? `briefing ${result.text}` : `error: ${result.error}`;
     },
   },
   {

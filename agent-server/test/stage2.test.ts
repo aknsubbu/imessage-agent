@@ -48,7 +48,7 @@ describe("tools", () => {
     await runtime.lanes.idle();
     runtime.handleEvent(textEvent("who is my sister?"));
     await drain(runtime);
-    expect(JSON.stringify(llm.calls.at(-1)!.messages[1])).toContain("What you know about this person:\\n- Sister is called Meera\\n- Vegetarian");
+    expect(JSON.stringify(llm.calls.at(-1)!.messages[2])).toContain("What you know about this person:\\n- Sister is called Meera\\n- Vegetarian");
   });
 
   it("withholds tools on the last step so a looping model still has to answer", async () => {
@@ -256,7 +256,7 @@ describe("memory", () => {
     runtime.handleEvent(textEvent("where were we?"));
     await drain(runtime);
     const prompt = llm.calls.at(-1)!.messages;
-    expect(String(prompt[1]!.content)).toBe("Earlier in this conversation:\nThey are planning a trip to Goa in December.");
+    expect(String(prompt[2]!.content)).toBe("Earlier in this conversation:\nThey are planning a trip to Goa in December.");
     expect(JSON.stringify(prompt)).not.toContain("old message 5\"");
   });
 

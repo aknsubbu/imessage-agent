@@ -5,8 +5,11 @@ import type { DB } from "../db.ts";
 import type { Transcriber } from "../llm/audio.ts";
 import { type ChatMessage, type ContentPart, type LLM, type LLMResponse, type LLMUsage, RequestTooLargeError } from "../llm/types.ts";
 import { audioForWhisper, discard, imageAsJpeg } from "../media.ts";
-import { chatSummary, history, listFacts, type MessageRow, pendingMessages, saveSummary, setMessageText, unsummarised } from "../store.ts";
+import { noSync, type Sync } from "../integrations/sync.ts";
+import { noWeather, type Weather } from "../integrations/weather.ts";
+import { chatSummary, getProfile, history, listFacts, type MessageRow, pendingMessages, saveSummary, setMessageText, unsummarised } from "../store.ts";
 import { buildMessages } from "./context.ts";
+import { FACT_CHECK_BRIEF, personaBlock, styleHint, wantsFactCheck } from "./persona.ts";
 import { contextLine, memoryBlock, systemPrompt } from "./prompt.ts";
 import { parseReply, type ReplyPlan } from "./reply.ts";
 import type { ToolDef } from "../llm/types.ts";
@@ -35,6 +38,11 @@ export type TurnDeps = {
   llm: LLM;
   transcribe: Transcriber;
   web: Web;
+  /** Used by the briefing tool; offline when absent. */
+  weather?: Weather;
+  /** Copies reminders and list items into outside apps; does nothing when absent. */
+  sync?: Sync;
+  /** The name the agent uses unless a person has given it another. */
   agentName: string;
   timezone: string;
   mediaDir: string;
@@ -101,13 +109,22 @@ export function createRunTurn(deps: TurnDeps): RunTurn {
     }
 
     const rows = history(deps.db, chatId, 60);
+    const profile = getProfile(deps.db, senderId);
+    const name = profile.agentName ?? deps.agentName;
+    const persona = personaBlock(profile, deps.agentName);
+    // Added late in the prompt, where it cannot disturb the cached prefix above it.
+    const lateNotes = [
+      profile.mirror ? styleHint(rows.filter((row) => row.role === "user").slice(-30).map((row) => row.text)) : "",
+      wantsFactCheck(pending.map((row) => row.text).join("\n")) ? FACT_CHECK_BRIEF : "",
+    ].filter(Boolean);
     const base = (budgetTokens: number, imageCount: number): ChatMessage[] => {
       const shown = images.slice(images.length - imageCount);
       const hidden = photos.length - shown.length;
       const messages = buildMessages({
-        system: systemPrompt(deps.agentName),
+        system: systemPrompt(name),
+        persona,
         memory: memoryBlock(listFacts(deps.db, senderId), chatSummary(deps.db, chatId)),
-        contextLine: contextLine(deps.now(), deps.timezone),
+        contextLine: [contextLine(deps.now(), deps.timezone), ...lateNotes].join("\n"),
         history: rows,
         budgetTokens,
       });
@@ -145,7 +162,19 @@ export function createRunTurn(deps: TurnDeps): RunTurn {
     }
 
     const userLinks = rows.filter((row) => row.role === "user").flatMap((row) => linksIn(row.text));
-    const context = { db: deps.db, chatId, senderId, timezone: deps.timezone, now: deps.now, web: deps.web, userLinks, signal };
+    const context = {
+      db: deps.db,
+      chatId,
+      senderId,
+      timezone: deps.timezone,
+      now: deps.now,
+      web: deps.web,
+      weather: deps.weather ?? noWeather,
+      sync: deps.sync ?? noSync,
+      defaultName: deps.agentName,
+      userLinks,
+      signal,
+    };
     // Once text from the web is in the turn, nothing it says can cause a change
     // or send anything out: tools that save, schedule, delete, search or open a
     // link are withheld and refused until the turn ends. A poisoned page can

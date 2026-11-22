@@ -6,10 +6,13 @@ import type { Config } from "./config.ts";
 import { ActionHub, type HubOptions } from "./core/hub.ts";
 import { createIntake } from "./core/intake.ts";
 import { Lanes } from "./core/lanes.ts";
+import { createProactive } from "./core/proactive.ts";
 import { createReminders } from "./core/reminders.ts";
 import { createScheduler } from "./core/scheduler.ts";
 import { type DB, openDb } from "./db.ts";
 import { createApp } from "./http.ts";
+import { createSync, type Sync } from "./integrations/sync.ts";
+import { createWeather, type Weather } from "./integrations/weather.ts";
 import { createTranscriber, type Transcriber } from "./llm/audio.ts";
 import { FakeLLM } from "./llm/fake.ts";
 import { createGuard } from "./llm/guard.ts";
@@ -28,6 +31,10 @@ export type RuntimeOverrides = {
   transcribe?: Transcriber;
   convert?: TurnDeps["convert"];
   web?: Web;
+  weather?: Weather;
+  sync?: Sync;
+  /** For the Todoist and Notion calls, which are separate from the model's. */
+  syncFetch?: FetchLike;
   log?: (message: string) => void;
 };
 
@@ -60,11 +67,16 @@ export function createRuntime(config: Config, overrides: RuntimeOverrides = {}) 
       guard: config.llmMode === "groq" ? createGuard({ slots: config.slots, db, fetchImpl: overrides.fetchImpl, now, log }) : undefined,
       log,
     });
+  // Open-Meteo needs no key, so weather works in fake mode too: a briefing can be tried from the terminal.
+  const weather = overrides.weather ?? createWeather({ log });
+  const sync = overrides.sync ?? createSync({ db, integrations: config.integrations, fetchImpl: overrides.syncFetch, now, log });
   const runTurn = createRunTurn({
     db,
     llm,
     transcribe,
     web,
+    weather,
+    sync,
     agentName: config.agentName,
     timezone: config.timezone,
     mediaDir: config.mediaDir,
@@ -89,15 +101,19 @@ export function createRuntime(config: Config, overrides: RuntimeOverrides = {}) 
     timezone: config.timezone,
     nudgeAfterMinutes: config.nudgeAfterMinutes,
     quietHours: config.quietHours,
+    sync,
     now,
     log,
   });
-  const scheduler = createScheduler({ reminders });
+  const proactive = createProactive({ db, lanes, weather, timezone: config.timezone, quietHours: config.quietHours, now, log });
+  const scheduler = createScheduler({ reminders, proactive });
   const commands: CommandDeps = {
     db,
     timezone: config.timezone,
     llmMode: config.llmMode,
     slotStatus: () => pool?.status() ?? [],
+    weather,
+    integrations: sync.providers,
     now,
     startedAt,
   };
@@ -105,6 +121,7 @@ export function createRuntime(config: Config, overrides: RuntimeOverrides = {}) 
     db,
     lanes,
     reminders,
+    proactive,
     commands,
     claimable: config.ownerIds.length === 0,
     mediaDir: config.mediaDir,

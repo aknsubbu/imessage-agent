@@ -15,10 +15,12 @@ import {
   setEventOutcome,
 } from "../store.ts";
 import type { Lanes } from "./lanes.ts";
+import type { GoalOutcome, Proactive } from "./proactive.ts";
 import type { ReminderOutcome, Reminders } from "./reminders.ts";
 
 export type Outcome =
   | ReminderOutcome
+  | GoalOutcome
   | "duplicate"
   | "signal" // reaction, read receipt, poll vote: recorded, never a turn
   | "auto_reply"
@@ -34,6 +36,7 @@ export type IntakeDeps = {
   db: DB;
   lanes: Lanes;
   reminders: Reminders;
+  proactive: Proactive;
   commands: CommandDeps;
   /** True when no owner was configured: the first person to text becomes the owner. */
   claimable: boolean;
@@ -41,6 +44,9 @@ export type IntakeDeps = {
   now: () => number;
   log: (message: string) => void;
 };
+
+/** "/check", optionally after a swipe-reply preview line, then the claim. */
+const CHECK_COMMAND = /^(\(replying to "[^\n]*"\)\n)?\/check\b[ \t]*([\s\S]*)$/i;
 
 const MEDIA_LABEL: Record<string, string> = {
   image: "[photo]",
@@ -64,7 +70,7 @@ export function createIntake(deps: IntakeDeps): (ev: InboundEvent) => Outcome {
 
   const decide = (ev: InboundEvent): Outcome => {
     // A thumbs-up on a reminder marks it done. Only from people the agent answers.
-    if (ev.kind === "reaction" && ev.sender && roleOf(db, ev.sender.id)) return deps.reminders.onReaction(ev) ?? "signal";
+    if (ev.kind === "reaction" && ev.sender && roleOf(db, ev.sender.id)) return deps.reminders.onReaction(ev) ?? deps.proactive.onReaction(ev) ?? "signal";
     if (ev.kind !== "message") return "signal";
     // Focus and Driving auto-replies, and spam-flagged messages, never get an answer.
     if (ev.flags?.autoReply || ev.flags?.spam) return "auto_reply";
@@ -82,20 +88,45 @@ export function createIntake(deps: IntakeDeps): (ev: InboundEvent) => Outcome {
       return "not_allowed";
     }
 
-    const text = describe(ev);
+    let text = describe(ev);
     if (!text) return "empty";
+
+    // "/check <claim>" is a request to the model, not a fixed reply: it becomes a plain
+    // "is this true?" (a swipe-reply to a message, or a photo, may carry the claim instead).
+    const check = CHECK_COMMAND.exec(text);
+    if (check) {
+      const claim = check[2]!.trim();
+      const hasSubject = Boolean(claim || check[1] || ev.parts.some((part: Part) => part.type === "media"));
+      if (!hasSubject) {
+        addUserMessage(db, { chatId: ev.chat.id, senderId: ev.sender.id, text, platformId: ev.eventId, state: "handled" }, now());
+        void lanes.say(ev.chat.id, ["Send /check with what you want checked, or swipe-reply to a message with /check."]);
+        return "command";
+      }
+      text = `${check[1] ?? ""}Is this true? ${claim}`.trim();
+    }
     const message = { chatId: ev.chat.id, senderId: ev.sender.id, text, platformId: ev.eventId };
     const media = ev.parts.filter((part) => part.type === "media");
 
     if (commandName(text)) {
       // Stored before the command runs, so /reset also clears its own message.
       addUserMessage(db, { ...message, state: "handled" }, now());
-      void lanes.say(ev.chat.id, runCommand(deps.commands, { chatId: ev.chat.id, senderId: ev.sender.id, role }, text) ?? []);
+      const reply = runCommand(deps.commands, { chatId: ev.chat.id, senderId: ev.sender.id, role }, text) ?? [];
+      if (Array.isArray(reply)) void lanes.say(ev.chat.id, reply);
+      else {
+        // A command that looks something up (a city, say) answers when the lookup returns.
+        reply
+          .then((bubbles) => lanes.say(ev.chat.id, bubbles))
+          .catch((err) => {
+            log(`command failed: ${err}`);
+            void lanes.say(ev.chat.id, ["That didn't work on my side. Try again in a moment."]);
+          });
+      }
       return "command";
     }
 
     // "done" or "1h" in answer to a reminder is handled on the spot, without the model.
-    const handled = media.length === 0 ? deps.reminders.onMessage(ev, text) : null;
+    // The same goes for "yes", "no" or "done" in answer to a goal check-in.
+    const handled = media.length === 0 ? (deps.reminders.onMessage(ev, text) ?? deps.proactive.onMessage(ev, text)) : null;
     if (handled) {
       addUserMessage(db, { ...message, state: "handled" }, now());
       return handled;

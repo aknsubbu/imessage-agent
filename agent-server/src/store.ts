@@ -451,10 +451,14 @@ export function removeFactById(db: DB, senderId: string, id: number): boolean {
 
 const listName = (name: string) => name.trim().toLowerCase() || "notes";
 
-export function addNotes(db: DB, senderId: string, list: string, items: string[], now: number): void {
-  for (const item of items) {
-    run(db, "INSERT INTO notes (sender_id, list, text, created_at) VALUES (?, ?, ?, ?)", senderId, listName(list), item, now);
-  }
+/** Adds items to a list and returns the row id of each. */
+export function addNotes(db: DB, senderId: string, list: string, items: string[], now: number): number[] {
+  return items.map((item) =>
+    Number(
+      run(db, "INSERT INTO notes (sender_id, list, text, created_at) VALUES (?, ?, ?, ?)", senderId, listName(list), item, now)
+        .lastInsertRowid,
+    ),
+  );
 }
 
 export function listNotes(db: DB, senderId: string, list: string): string[] {
@@ -472,6 +476,11 @@ export function listNames(db: DB, senderId: string): { list: string; count: numb
 
 /** Removes items containing `item` from a list, or the whole list when `item` is "*". Returns what was removed. */
 export function removeNotes(db: DB, senderId: string, list: string, item: string): string[] {
+  return removeNoteRows(db, senderId, list, item).map((row) => row.text);
+}
+
+/** As `removeNotes`, but keeps each removed item's id, which an outside-app copy is filed under. */
+export function removeNoteRows(db: DB, senderId: string, list: string, item: string): { id: number; text: string }[] {
   const rows =
     item === "*"
       ? all(db, "SELECT id, text FROM notes WHERE sender_id = ? AND list = ?", senderId, listName(list))
@@ -483,7 +492,7 @@ export function removeNotes(db: DB, senderId: string, list: string, item: string
           item,
         );
   for (const row of rows) run(db, "DELETE FROM notes WHERE id = ?", row.id);
-  return rows.map((row) => row.text as string);
+  return rows.map((row) => ({ id: row.id as number, text: row.text as string }));
 }
 
 // --- reminders ---------------------------------------------------------------
@@ -650,4 +659,311 @@ export function streak(db: DB, reminderId: number): number {
     count++;
   }
   return count;
+}
+
+// --- persona -------------------------------------------------------------------
+
+export type Profile = {
+  /** The name this person calls the agent; null means the server's default. */
+  agentName: string | null;
+  preset: string;
+  note: string;
+  mirror: boolean;
+};
+
+const DEFAULT_PROFILE: Profile = { agentName: null, preset: "friend", note: "", mirror: false };
+
+export function getProfile(db: DB, senderId: string): Profile {
+  const row = get(db, "SELECT * FROM profiles WHERE sender_id = ?", senderId);
+  return row ? { agentName: row.agent_name, preset: row.preset, note: row.note, mirror: row.mirror === 1 } : { ...DEFAULT_PROFILE };
+}
+
+/** Changes only the fields given and returns the result. */
+export function saveProfile(db: DB, senderId: string, patch: Partial<Profile>, now: number): Profile {
+  const next = { ...getProfile(db, senderId), ...patch };
+  run(
+    db,
+    `INSERT INTO profiles (sender_id, agent_name, preset, note, mirror, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT (sender_id) DO UPDATE SET agent_name = excluded.agent_name, preset = excluded.preset,
+       note = excluded.note, mirror = excluded.mirror, updated_at = excluded.updated_at`,
+    senderId,
+    next.agentName,
+    next.preset,
+    next.note,
+    next.mirror ? 1 : 0,
+    now,
+  );
+  return next;
+}
+
+export function resetProfile(db: DB, senderId: string): void {
+  run(db, "DELETE FROM profiles WHERE sender_id = ?", senderId);
+}
+
+// --- morning briefing ------------------------------------------------------------
+
+export type Briefing = {
+  senderId: string;
+  chatId: string;
+  enabled: boolean;
+  /** Local time, "HH:MM". */
+  time: string;
+  city: string | null;
+  lat: number | null;
+  lon: number | null;
+  fahrenheit: boolean;
+  /** The local date ("YYYY-MM-DD") it last went out. */
+  lastSentDay: string | null;
+};
+
+const toBriefing = (row: Row): Briefing => ({
+  senderId: row.sender_id,
+  chatId: row.chat_id,
+  enabled: row.enabled === 1,
+  time: row.time,
+  city: row.city,
+  lat: row.lat,
+  lon: row.lon,
+  fahrenheit: row.fahrenheit === 1,
+  lastSentDay: row.last_sent_day,
+});
+
+export function getBriefing(db: DB, senderId: string): Briefing | undefined {
+  const row = get(db, "SELECT * FROM briefings WHERE sender_id = ?", senderId);
+  return row ? toBriefing(row) : undefined;
+}
+
+/** Creates the briefing on first use (on, 08:00, no weather) and changes only the fields given. */
+export function saveBriefing(
+  db: DB,
+  senderId: string,
+  chatId: string,
+  patch: Partial<Omit<Briefing, "senderId" | "chatId">>,
+): Briefing {
+  const next: Briefing = {
+    senderId,
+    chatId,
+    enabled: true,
+    time: "08:00",
+    city: null,
+    lat: null,
+    lon: null,
+    fahrenheit: false,
+    lastSentDay: null,
+    ...getBriefing(db, senderId),
+    ...patch,
+  };
+  // The chat is wherever they last asked; a briefing follows the conversation they use.
+  next.chatId = chatId;
+  run(
+    db,
+    `INSERT OR REPLACE INTO briefings (sender_id, chat_id, enabled, time, city, lat, lon, fahrenheit, last_sent_day)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    senderId,
+    chatId,
+    next.enabled ? 1 : 0,
+    next.time,
+    next.city,
+    next.lat,
+    next.lon,
+    next.fahrenheit ? 1 : 0,
+    next.lastSentDay,
+  );
+  return next;
+}
+
+export function enabledBriefings(db: DB): Briefing[] {
+  return all(db, "SELECT * FROM briefings WHERE enabled = 1").map(toBriefing);
+}
+
+export function markBriefingSent(db: DB, senderId: string, day: string): void {
+  run(db, "UPDATE briefings SET last_sent_day = ? WHERE sender_id = ?", day, senderId);
+}
+
+// --- goals ---------------------------------------------------------------------
+
+export type Cadence = "daily" | "weekly" | "once";
+
+export type Goal = {
+  id: number;
+  senderId: string;
+  chatId: string;
+  title: string;
+  cadence: Cadence;
+  status: "active" | "done" | "dropped";
+  dueAt: number | null;
+  followedUpAt: number | null;
+  createdAt: number;
+};
+
+const toGoal = (row: Row): Goal => ({
+  id: row.id,
+  senderId: row.sender_id,
+  chatId: row.chat_id,
+  title: row.title,
+  cadence: row.cadence,
+  status: row.status,
+  dueAt: row.due_at,
+  followedUpAt: row.followed_up_at,
+  createdAt: row.created_at,
+});
+
+export function addGoal(
+  db: DB,
+  g: { senderId: string; chatId: string; title: string; cadence: Cadence; dueAt: number | null },
+  now: number,
+): number {
+  return Number(
+    run(
+      db,
+      "INSERT INTO goals (sender_id, chat_id, title, cadence, due_at, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      g.senderId,
+      g.chatId,
+      g.title,
+      g.cadence,
+      g.dueAt,
+      now,
+    ).lastInsertRowid,
+  );
+}
+
+export function activeGoals(db: DB, senderId: string): Goal[] {
+  return all(db, "SELECT * FROM goals WHERE sender_id = ? AND status = 'active' ORDER BY id", senderId).map(toGoal);
+}
+
+/** Active goals matching an id or words in the title. More than one match means the caller should ask which. */
+export function matchGoals(db: DB, senderId: string, by: { id?: number; about?: string }): Goal[] {
+  return activeGoals(db, senderId).filter((goal) =>
+    by.id !== undefined ? goal.id === by.id : by.about ? goal.title.toLowerCase().includes(by.about.toLowerCase()) : false,
+  );
+}
+
+export function logGoal(db: DB, goalId: number, note: string, now: number): void {
+  run(db, "INSERT INTO goal_logs (goal_id, at, note) VALUES (?, ?, ?)", goalId, now, note);
+}
+
+export function endGoal(db: DB, goalId: number, status: "done" | "dropped", now: number): void {
+  run(db, "UPDATE goals SET status = ?, ended_at = ? WHERE id = ?", status, now, goalId);
+}
+
+/** When this goal was moved forward, oldest first, from `since` on. */
+export function goalLogTimes(db: DB, goalId: number, since: number): number[] {
+  return all(db, "SELECT at FROM goal_logs WHERE goal_id = ? AND at >= ? ORDER BY at", goalId, since).map((row) => row.at as number);
+}
+
+/** Active goals with a date that has passed and no follow-up yet. */
+export function goalsAwaitingFollowup(db: DB, dueBefore: number): Goal[] {
+  return all(
+    db,
+    "SELECT * FROM goals WHERE status = 'active' AND due_at IS NOT NULL AND due_at <= ? AND followed_up_at IS NULL ORDER BY due_at LIMIT 20",
+    dueBefore,
+  ).map(toGoal);
+}
+
+/** One-off event goals that were asked about and whose date is long past, so they can leave the list. */
+export function staleEventGoals(db: DB, dueBefore: number): Goal[] {
+  return all(
+    db,
+    "SELECT * FROM goals WHERE status = 'active' AND cadence = 'once' AND due_at IS NOT NULL AND due_at < ? AND followed_up_at IS NOT NULL",
+    dueBefore,
+  ).map(toGoal);
+}
+
+export function markFollowedUp(db: DB, goalId: number, now: number): void {
+  run(db, "UPDATE goals SET followed_up_at = ? WHERE id = ?", now, goalId);
+}
+
+// --- check-ins -------------------------------------------------------------------
+
+export type Checkins = {
+  senderId: string;
+  chatId: string;
+  enabled: boolean;
+  time: string;
+  lastDay: string | null;
+  lastReviewDay: string | null;
+};
+
+const toCheckins = (row: Row): Checkins => ({
+  senderId: row.sender_id,
+  chatId: row.chat_id,
+  enabled: row.enabled === 1,
+  time: row.time,
+  lastDay: row.last_day,
+  lastReviewDay: row.last_review_day,
+});
+
+export function getCheckins(db: DB, senderId: string): Checkins | undefined {
+  const row = get(db, "SELECT * FROM checkins WHERE sender_id = ?", senderId);
+  return row ? toCheckins(row) : undefined;
+}
+
+/** Turns check-ins on at 19:00 the first time someone sets a goal; leaves a choice they already made alone. */
+export function ensureCheckins(db: DB, senderId: string, chatId: string): void {
+  run(db, "INSERT OR IGNORE INTO checkins (sender_id, chat_id) VALUES (?, ?)", senderId, chatId);
+  run(db, "UPDATE checkins SET chat_id = ? WHERE sender_id = ?", chatId, senderId);
+}
+
+export function saveCheckins(db: DB, senderId: string, patch: { enabled?: boolean; time?: string }): void {
+  if (patch.enabled !== undefined) run(db, "UPDATE checkins SET enabled = ? WHERE sender_id = ?", patch.enabled ? 1 : 0, senderId);
+  if (patch.time !== undefined) run(db, "UPDATE checkins SET time = ? WHERE sender_id = ?", patch.time, senderId);
+}
+
+export function enabledCheckins(db: DB): Checkins[] {
+  return all(db, "SELECT * FROM checkins WHERE enabled = 1").map(toCheckins);
+}
+
+export function markCheckinDay(db: DB, senderId: string, field: "last_day" | "last_review_day", day: string): void {
+  run(db, `UPDATE checkins SET ${field} = ? WHERE sender_id = ?`, day, senderId);
+}
+
+export type GoalCheckin = { id: number; goalId: number; chatId: string; sentAt: number; answeredAt: number | null };
+
+const toGoalCheckin = (row: Row): GoalCheckin => ({
+  id: row.id,
+  goalId: row.goal_id,
+  chatId: row.chat_id,
+  sentAt: row.sent_at,
+  answeredAt: row.answered_at,
+});
+
+export function createGoalCheckin(db: DB, goalId: number, chatId: string, now: number): number {
+  return Number(run(db, "INSERT INTO goal_checkins (goal_id, chat_id, sent_at) VALUES (?, ?, ?)", goalId, chatId, now).lastInsertRowid);
+}
+
+export function setGoalCheckinMessage(db: DB, id: number, messageId: string): void {
+  run(db, "UPDATE goal_checkins SET message_id = ? WHERE id = ?", messageId, id);
+}
+
+/** The check-in bubble a message or tapback is about. */
+export function goalCheckinByMessage(db: DB, chatId: string, messageId: string): GoalCheckin | undefined {
+  const row = get(
+    db,
+    "SELECT * FROM goal_checkins WHERE chat_id = ? AND message_id IN (?, ?) ORDER BY id DESC LIMIT 1",
+    chatId,
+    messageId,
+    bareMessageId(messageId),
+  );
+  return row ? toGoalCheckin(row) : undefined;
+}
+
+export function answerGoalCheckin(db: DB, id: number, now: number): void {
+  run(db, "UPDATE goal_checkins SET answered_at = ? WHERE id = ?", now, id);
+}
+
+export function getGoal(db: DB, id: number): Goal | undefined {
+  const row = get(db, "SELECT * FROM goals WHERE id = ?", id);
+  return row ? toGoal(row) : undefined;
+}
+
+// --- copies in outside apps ------------------------------------------------------
+
+export function setRef(db: DB, provider: string, kind: string, localId: number, remoteId: string): void {
+  run(db, "INSERT OR REPLACE INTO external_refs (provider, kind, local_id, remote_id) VALUES (?, ?, ?, ?)", provider, kind, localId, remoteId);
+}
+
+export function takeRefs(db: DB, kind: string, localId: number): { provider: string; remoteId: string }[] {
+  const rows = all(db, "SELECT provider, remote_id FROM external_refs WHERE kind = ? AND local_id = ?", kind, localId);
+  run(db, "DELETE FROM external_refs WHERE kind = ? AND local_id = ?", kind, localId);
+  return rows.map((row) => ({ provider: row.provider as string, remoteId: row.remote_id as string }));
 }

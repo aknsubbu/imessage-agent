@@ -2,9 +2,12 @@
 // delivery, a thumbs-up to mark it done, a reply to snooze it, one nudge if it
 // goes unacknowledged, and a streak count for the ones that repeat.
 import type { InboundEvent } from "../../../protocol/index.ts";
+import { linesFor } from "../agent/persona.ts";
 import type { DB } from "../db.ts";
+import { noSync, type Sync } from "../integrations/sync.ts";
 import {
   addReminder,
+  getProfile,
   createRun,
   dueReminders,
   lastAssistantMessage,
@@ -20,7 +23,7 @@ import {
 import { formatLocal, localParts, nextOccurrence, type Repeat } from "../time.ts";
 import type { Lanes } from "./lanes.ts";
 
-const DONE_TAPBACKS = new Set(["👍", "\u2764\uFE0F", "\u2764"]);
+export const DONE_TAPBACKS = new Set(["👍", "\u2764\uFE0F", "\u2764"]);
 const DONE_WORDS = /^(done|did it|did that|finished|completed|all done|✅|☑️|✔️|✔)[\s!.]*$/iu;
 // A reply only counts as being about a reminder for this long after it was delivered.
 const REPLY_WINDOW_MS = 12 * 60 * 60_000;
@@ -53,10 +56,14 @@ export function createReminders(deps: {
   timezone: string;
   nudgeAfterMinutes: number;
   quietHours: [number, number];
+  /** Closes a reminder's copy in Todoist when it is marked done; absent when no integration is on. */
+  sync?: Sync;
   now: () => number;
   log: (message: string) => void;
 }) {
   const { db, lanes, now } = deps;
+  const sync = deps.sync ?? noSync;
+  const linesOf = (senderId: string) => linesFor(getProfile(db, senderId));
 
   const isQuiet = (): boolean => {
     const [from, to] = deps.quietHours;
@@ -68,8 +75,10 @@ export function createReminders(deps: {
     markRun(db, run.id, "done", now());
     // A repeating reminder is a habit: say how the streak stands. A one-off needs no reply.
     if (run.repeat !== "none") {
-      const count = streak(db, run.reminderId);
-      void lanes.say(run.chatId, [count >= 2 ? `✔ ${count} in a row` : "✔ Logged"]);
+      void lanes.say(run.chatId, [linesOf(run.senderId).logged(streak(db, run.reminderId))]);
+    } else {
+      // A repeating reminder's copy stays open; it is the same task every day.
+      sync.closed("reminder", run.reminderId);
     }
   }
 
@@ -125,7 +134,7 @@ export function createReminders(deps: {
           // One nudge at most, and none at all if they have been talking since (they saw it) or it is late.
           markRun(db, run.id, "nudged", now());
           if (userMessagedSince(db, run.chatId, run.sentAt) || isQuiet()) continue;
-          void lanes.say(run.chatId, [`Still on your list: ${run.text}`], (messageId) => setRunMessage(db, run.id, messageId, "nudge"));
+          void lanes.say(run.chatId, [linesOf(run.senderId).nudge(run.text)], (messageId) => setRunMessage(db, run.id, messageId, "nudge"));
           sent++;
         }
       }
